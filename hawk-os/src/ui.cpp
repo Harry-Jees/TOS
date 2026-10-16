@@ -876,18 +876,33 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 }
                 case ID_QUICK3: {
-                    // Create a text file, write into it, save it, read it back
-                    // and open it again in whatever handles .txt on this PC.
+                    // A real editor round-trip: open Notepad, type the line
+                    // with synthetic keystrokes, save through Notepad's own
+                    // Save dialog, close it, then open the saved file again
+                    // from disk and read it back to prove it persisted.
                     const wchar_t* harry =
-                        L"# Create a text file, write 'hello harry' into it, save it,\n"
-                        L"# read it back and then open it again.\n"
-                        L"write hello-harry.txt hello harry\n"
-                        L"read hello-harry.txt\n"
-                        L"open hello-harry.txt\n"
-                        L"wait 2200\n"
-                        L"focus hello-harry.txt\n"
+                        L"# Create a text document, write 'hello harry', save it,\n"
+                        L"# close it and open it again from disk.\n"
+                        L"del ~\\Documents\\hello-harry.txt\n"
+                        L"open notepad\n"
+                        L"wait 2400\n"
+                        L"focus Notepad\n"
+                        L"type hello harry\n"
+                        L"key ctrl+s\n"
+                        L"wait 2000\n"
+                        L"type hello-harry.txt\n"
+                        L"key enter\n"
+                        L"wait 2000\n"
+                        L"close Notepad\n"
+                        L"waitclose Notepad 8000\n"
+                        L"wait 1500\n"
+                        L"open ~\\Documents\\hello-harry.txt\n"
+                        L"wait 2600\n"
+                        L"focus Notepad\n"
+                        L"read ~\\Documents\\hello-harry.txt\n"
                         L"shot hello-harry-opened.png\n"
-                        L"windows 5\n";
+                        L"windows 6\n"
+                        L"log hello harry: created, written, saved and reopened\n";
                     SetWindowTextW(g_ui->script, harry);
                     return 0;
                 }
@@ -910,11 +925,14 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         L"# open notepad | open https://...        launch something\n"
                         L"# close <title part>                    ask a window to close\n"
                         L"# wait <ms>                             pause\n"
+                        L"# waitclose <title part> [ms]           wait until a window is gone\n"
                         L"# pixel x y                             colour at a point\n"
                         L"# find RRGGBB [tol] [move|click|double] find a colour, act on it\n"
                         L"# verifypixel x y RRGGBB [tol]          assert what is on screen\n"
                         L"# windows | monitors | cursor            describe the machine\n"
                         L"# write <path> <text> | mkdir <path>    create files/folders\n"
+                        L"# ensure <path> [text]                  create a file only if missing\n"
+                        L"# del <path>                            delete a file (~ = your folder)\n"
                         L"# try <cmd>                             ignore a failure\n"
                         L"#\n"
                         L"# Delete these comment lines and write your own commands here.\n";

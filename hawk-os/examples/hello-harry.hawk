@@ -1,0 +1,41 @@
+# Hello Harry - the full document round-trip, driven like a human would:
+#
+#   1. open a real text editor
+#   2. type "hello harry" with real keystrokes
+#   3. save through the editor's own Save dialog (Ctrl+S, name, Enter)
+#   4. close the editor
+#   5. open the saved file again from disk and read it back to prove it
+#      persisted
+#
+# Run it:   hawk.exe --file examples\hello-harry.hawk
+# Dry run:  hawk.exe --dry-run --file examples\hello-harry.hawk
+#
+# Result:   %USERPROFILE%\Documents\hello-harry.txt containing "hello harry",
+#           reopened on screen, with a screenshot in shots\reopened.png.
+# Hold ESC or Ctrl+Alt+H to abort at any point.
+
+del ~\Documents\hello-harry.txt
+open notepad
+wait 2400
+focus Notepad
+
+type hello harry
+key ctrl+s
+wait 2000
+
+type hello-harry.txt
+key enter
+wait 2000
+
+close Notepad
+waitclose Notepad 8000
+wait 1500
+
+open ~\Documents\hello-harry.txt
+wait 2600
+focus Notepad
+read ~\Documents\hello-harry.txt
+shot hello-harry-opened.png
+windows 6
+
+log hello harry: created, written, saved and reopened

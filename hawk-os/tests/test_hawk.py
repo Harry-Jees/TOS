@@ -257,10 +257,29 @@ def main() -> int:
     check("hawk.log records the runs", log_ok, log_detail)
 
     # 12. without a key the goal path explains itself instead of guessing
-    goal = run("--goal", "summarise what is on my screen right now")
+    goal = run("--key", "", "--goal", "summarise what is on my screen right now")
     check("goal without a key explains the setup",
-          goal.returncode != 0 and "no API key" in (goal.stdout + goal.stderr),
+          goal.returncode != 0 and "no model key" in (goal.stdout + goal.stderr),
           (goal.stdout.strip().splitlines() or ["<empty>"])[-1][:90])
+
+    no_vision = run("--key", "test-only-invalid-key", "--no-vision", "--goal",
+                    "summarise what is on my screen")
+    check("visual goals refuse to run without screenshot vision",
+          no_vision.returncode != 0 and "requires vision" in (no_vision.stdout + no_vision.stderr),
+          (no_vision.stdout.strip().splitlines() or ["<empty>"])[-1][:90])
+
+    model_failure = run("--key", "test-only-invalid-key", "--base-url", "https://",
+                        "--goal", "open notepad and type hello")
+    model_output = model_failure.stdout + model_failure.stderr
+    check("model receives a screenshot before it plans",
+          "screenshot attached:" in model_output and "base URL looks wrong" in model_output,
+          [line.strip() for line in model_output.splitlines()
+           if "screenshot attached:" in line or "model call failed" in line][-2:])
+    check("failed model calls do not execute guessed plans",
+          model_failure.returncode != 0 and "acting without the model" not in model_output and
+          "[model] open notepad" not in model_output,
+          [line.strip() for line in model_output.splitlines()
+           if "model call failed" in line or "acting without the model" in line][-1:])
 
     # put the mouse back where the human left it, and confirm the position
     # in-process for the same reason as check 5

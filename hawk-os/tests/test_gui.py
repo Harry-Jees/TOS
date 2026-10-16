@@ -123,9 +123,9 @@ def main() -> int:
     check("accent button is drawn where it says it is", accent >= 200,
           f"{accent} accent pixels inside run_goal {layout['run_goal']}")
 
-    danger = count_colour(rgba, w, bpp, layout["stop"], (214, 62, 54))
-    check("STOP button is drawn where it says it is", danger >= 200,
-          f"{danger} red pixels inside stop {layout['stop']}")
+    idle_stop = count_colour(rgba, w, bpp, layout["stop"], (42, 42, 48))
+    check("idle STOP button is visibly disabled", idle_stop >= 200,
+          f"{idle_stop} disabled-state pixels inside stop {layout['stop']}")
 
     colours = distinct_colours(rgba, w, bpp, layout["preview"])
     check("live screen preview has picture content", colours >= 25,

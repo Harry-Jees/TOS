@@ -30,8 +30,8 @@ Everything below is a real action on the real machine:
 | **See** | `shot`, `shotwin <title>`, `region x y w h`, `windows`, `monitors`, `cursor`, `pixel x y`, `find RRGGBB [tol] [move\|click\|double]` |
 | **Touch** | `move x y`, `move rel dx dy`, `click [left\|right\|double] [x y]`, `drag x1 y1 x2 y2`, `scroll <notches>` |
 | **Type** | `type <text>` (real Unicode keystrokes, `\n` is Enter), `key ctrl+s`, `key alt+f4`, `key enter` |
-| **Windows** | `focus <title part>`, `close <title part>`, `open notepad`, `open https://example.com` |
-| **Files** | `write <path> <text>`, `mkdir <path>` (relative paths land in `workspace/`) |
+| **Windows** | `focus <title part>`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
+| **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (relative paths land in `workspace/`; `~` starts at your profile folder) |
 | **Flow** | `wait <ms>`, `try <cmd>`, `verifypixel x y RRGGBB [tol]`, `log <text>`, `# comment`, `done` |
 
 `find` is the one that makes "press the button" possible without knowing any
@@ -60,11 +60,14 @@ NIM is the default (`https://integrate.api.nvidia.com/v1`,
 `meta/llama-3.2-90b-vision-instruct`). Or set `HAWK_API_KEY`, `HAWK_BASE_URL`,
 `HAWK_MODEL`, or pass `--key-file <path>`.
 
-With a vision model configured, **Run goal** sends the goal plus a downscaled
-screenshot and the window list, gets back a short command script, executes it,
-looks again, and repeats until the model says `done`. Without a key it still
-runs anything that is already a script, and says so plainly if you ask it to
-plan.
+With a vision-capable model configured, **Run goal** sends the goal, a fresh
+downscaled screenshot, the screenshot-to-desktop coordinate mapping, and the
+window list. It executes at most three model commands, captures the resulting
+screen, and asks the model what to do next. It only accepts `done` from a
+later screenshot check; if a model request fails, it reports the error rather
+than silently substituting a guessed script. A model key is required for
+screenshot-based planning. Without a key, supported simple goals can still use
+the built-in planner, and existing scripts can still be run directly.
 
 ## 3. Build
 
@@ -124,12 +127,13 @@ Not "it compiled". These are the checks that ran against the built binary:
   target. It also types 16 characters into a live `EDIT` control (all 16 arrive
   in order), captures the screen, writes and re-reads a PNG, finds a colour it
   painted, and proves a dry-run script executes nothing.
-* **`python tests/test_hawk.py` — 16/16.** Drives the CLI and inspects the
+* **`python tests/test_hawk.py` — 19/19.** Drives the CLI and inspects the
   artefacts: PNGs are fully decoded in Python (all five filter types, every
   CRC checked), the pixel the tool reports is compared against the decoded
   screenshot, `find` is verified by probing the location it returned, the
-  fallback encoder is exercised with `HAWK_NO_WIC=1`, and the run log is
-  checked for the actions.
+  fallback encoder is exercised with `HAWK_NO_WIC=1`, and goal-mode checks
+  confirm screenshot attachment, vision requirements, and no guessed-plan
+  fallback when a model request fails.
 * **`python tests/test_gui.py` — 12/12.** Starts the app, checks the geometry
   it publishes, and confirms from captured pixels that the accent Run button,
   the red STOP button, the header gradient and the screen preview really

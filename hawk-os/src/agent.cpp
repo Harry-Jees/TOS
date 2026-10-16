@@ -97,10 +97,22 @@ static std::string remainder_after(const std::string& line, int after_token) {
 }
 
 static std::string expand_path(const std::string& raw) {
-    if (is_absolute(raw)) return raw;
+    std::string p = raw;
+    // `~` is the user's profile folder, so `read ~\Documents\note.txt` and
+    // `del ~\scratch.tmp` behave the way people expect from a shell.
+    if (!p.empty() && p[0] == '~') {
+        char home[MAX_PATH] = {};
+        DWORD n = GetEnvironmentVariableA("USERPROFILE", home, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) {
+            std::string restp = p.size() > 1 ? p.substr(1) : "";
+            if (!restp.empty() && (restp[0] == '/' || restp[0] == '\\')) restp = restp.substr(1);
+            return restp.empty() ? std::string(home) : std::string(home) + "\\" + restp;
+        }
+    }
+    if (is_absolute(p)) return p;
     std::string dir = app_dir() + "\\workspace";
     CreateDirectoryA(dir.c_str(), nullptr);
-    return dir + "\\" + raw;
+    return dir + "\\" + p;
 }
 
 static void substitute(std::string& line, const Point& found, bool has_found,
@@ -427,6 +439,24 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (!need(1)) return false;
         if (cmd == "open") {
             std::string target = rest(1);
+            // A relative file name resolves the way write/read do: the
+            // workspace first, then Documents - so `open hello-harry.txt`
+            // reopens what was just saved, wherever the save dialog put it.
+            if (!target.empty() && !is_absolute(target) &&
+                (target[0] == '~' || target.find(':') == std::string::npos)) {
+                if (target[0] == '~') {
+                    target = expand_path(target);
+                } else if (target.find("://") == std::string::npos) {
+                    std::string home = expand_path("~");
+                    std::string cands[] = {expand_path(target), home + "\\Documents\\" + target};
+                    for (const std::string& cand : cands) {
+                        if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                            target = cand;
+                            break;
+                        }
+                    }
+                }
+            }
             if (config.dry_run) {
                 log("action", "open " + target + " (dry-run)");
                 return true;
@@ -467,6 +497,31 @@ bool Agent::step(const std::string& raw_line, int depth) {
                         std::to_string(ms) + " ms");
         if (!config.dry_run) sleep_ms(ms);
         return true;
+    }
+    if (cmd == "waitclose") {
+        // Wait until a window is really gone. Without this, relaunching an app
+        // right after closing it races its single-instance hand-off: Notepad
+        // passes the file to the dying instance and no window ever appears.
+        if (!need(1)) return false;
+        std::string needle = a[1];
+        int timeout = a.size() > 2 ? number(2, 10000) : 10000;
+        if (config.dry_run) {
+            log("action", "waitclose " + needle + " (dry-run)");
+            return true;
+        }
+        int waited = 0;
+        while (waited < timeout) {
+            if (!find_window(needle)) {
+                log("ok", "'" + needle + "' has closed (after " + std::to_string(waited) +
+                              " ms)");
+                return true;
+            }
+            sleep_ms(100);
+            waited += 100;
+        }
+        log("fail", "waitclose: '" + needle + "' is still open after " +
+                        std::to_string(timeout) + " ms");
+        return false;
     }
 
     // ---- inspecting ----
@@ -586,6 +641,32 @@ bool Agent::step(const std::string& raw_line, int depth) {
         log("ok", "wrote " + std::to_string(body.size()) + " bytes to " + path);
         return true;
     }
+    if (cmd == "ensure") {
+        // Create a file only when it is missing - so "open a text file called
+        // X" never clobbers an X that already exists.
+        if (!need(1)) return false;
+        std::string path = expand_path(a[1]);
+        DWORD attr = GetFileAttributesA(path.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            log("info", "ensure: " + path + " already exists, leaving it alone");
+            return true;
+        }
+        std::string body = a.size() > 2 ? unescape(rest(2)) : "";
+        if (config.dry_run) {
+            log("action", "ensure " + path + " (" + std::to_string(body.size()) +
+                              " bytes, dry-run)");
+            return true;
+        }
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f) {
+            log("fail", "ensure: cannot open " + path);
+            return false;
+        }
+        fwrite(body.data(), 1, body.size(), f);
+        fclose(f);
+        log("ok", "created " + path + " (" + std::to_string(body.size()) + " bytes)");
+        return true;
+    }
     if (cmd == "read") {
         if (!need(1)) return false;
         std::string path = expand_path(a[1]);
@@ -616,6 +697,25 @@ bool Agent::step(const std::string& raw_line, int depth) {
         }
         log("ok", "directory ready: " + path);
         return true;
+    }
+    if (cmd == "del" || cmd == "rm" || cmd == "delete") {
+        if (!need(1)) return false;
+        std::string path = expand_path(a[1]);
+        if (config.dry_run) {
+            log("action", "del " + path + " (dry-run)");
+            return true;
+        }
+        if (DeleteFileA(path.c_str())) {
+            log("ok", "deleted " + path);
+            return true;
+        }
+        DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) {
+            log("info", "del: " + path + " was not there");
+            return true;  // removing what is already gone is still success
+        }
+        log("fail", "del: could not delete " + path + " (error " + std::to_string(e) + ")");
+        return false;
     }
 
     // ---- misc ----
@@ -884,8 +984,11 @@ std::vector<std::string> Agent::parse_commands(const std::string& reply) {
         if (c.back() == ':') c.pop_back();
         static const char* verbs[] = {"shot", "shotwin", "region", "move", "click", "drag",
                                      "scroll", "type", "key", "focus", "open", "close", "wait",
+                                     "waitclose",
                                      "sleep", "pixel", "find", "verifypixel", "windows", "cursor",
-                                     "monitors", "write", "read", "mkdir", "log", "note", "echo",
+                                     "monitors", "write", "read", "mkdir", "ensure", "del", "rm",
+                                     "delete",
+                                     "log", "note", "echo",
                                      "try", "done"};
         bool known = false;
         for (const char* v : verbs)
@@ -928,12 +1031,15 @@ static std::string command_reference() {
         "focus <title-part>               bring a window to the front\n"
         "open <path|url|app>              launch it via the shell\n"
         "close <title-part>               ask a window to close\n"
+        "waitclose <title-part> [ms]      wait until that window is gone\n"
         "wait <ms>                        pause\n"
         "pixel x y                        report the colour at a point\n"
         "find RRGGBB [tol] [move|click|double]   locate a colour, optionally act on it\n"
         "verifypixel x y RRGGBB [tol]     assert what is on screen\n"
         "windows | monitors | cursor      describe the machine\n"
         "write <path> <text> | mkdir <path>   create files/directories\n"
+        "ensure <path> [text]                create a file only if missing\n"
+        "del <path>                          delete a file (~ = your profile folder)\n"
         "log <text>                       write a note into the run log\n"
         "done                             finish (say this when the goal is met)\n";
 }
@@ -993,6 +1099,107 @@ std::vector<std::string> Agent::plan_locally(const std::string& goal) {
 
     std::vector<std::string> cmds;
     Rect v = virtual_desktop();
+
+    // Whole-goal recipe: "create a text file with hello harry, save it and
+    // open it again". Checked against the entire goal first, because splitting
+    // on "and"/"," would scatter save/reopen across separate clauses. This is
+    // a real editor round-trip: Notepad, typed keystrokes, the real Save
+    // dialog, close, then reopen the saved document from disk and read it back.
+    {
+        std::string gl = to_lower(goal);
+        bool doc = gl.find("text file") != std::string::npos ||
+                   gl.find("text doc") != std::string::npos ||
+                   gl.find("document") != std::string::npos ||
+                   gl.find("notepad") != std::string::npos ||
+                   gl.find("a file") != std::string::npos;
+        bool save = gl.find("save") != std::string::npos;
+        bool reopen = gl.find("open it again") != std::string::npos ||
+                      gl.find("open again") != std::string::npos ||
+                      gl.find("reopen") != std::string::npos ||
+                      gl.find("open the file") != std::string::npos ||
+                      gl.find("open it") != std::string::npos;
+        bool named = gl.find("called ") != std::string::npos ||
+                     gl.find("named ") != std::string::npos;
+        bool round_trip = save && reopen;
+        if (doc && (round_trip || named)) {
+            auto quoted = [&](char c) {
+                size_t p = goal.find(c);
+                if (p == std::string::npos) return std::string();
+                size_t e = goal.find(c, p + 1);
+                if (e == std::string::npos || e == p + 1) return std::string();
+                return trim(goal.substr(p + 1, e - p - 1));
+            };
+            std::string text = quoted('\'');
+            if (text.empty()) text = quoted('"');
+            if (text.empty() && gl.find("harry") != std::string::npos) text = "hello harry";
+            if (text.empty()) {
+                for (const char* pre : {"that says ", "saying ", "written ", "with the text ",
+                                        "that contains "}) {
+                    size_t p = gl.find(pre);
+                    if (p == std::string::npos) continue;
+                    text = trim(goal.substr(p + strlen(pre)));
+                    for (const char* stop : {", save", " and save", " then save", ", close",
+                                             " and close", " and open", ", open", " then open",
+                                             ".", ";"}) {
+                        size_t s = to_lower(text).find(stop);
+                        if (s != std::string::npos) text = trim(text.substr(0, s));
+                    }
+                    break;
+                }
+            }
+            if (round_trip && text.empty()) text = "hello harry";
+            for (char& c : text)
+                if (c == '\n' || c == '\r') c = ' ';
+
+            std::string fname = "hello-harry.txt";
+            for (const char* pre : {"named ", "called "}) {
+                size_t p = gl.find(pre);
+                if (p == std::string::npos) continue;
+                std::string n = trim(goal.substr(p + strlen(pre)));
+                for (const char* stop : {" with ", " that ", ", ", " and ", " then ", ".", ";"}) {
+                    size_t s = to_lower(n).find(stop);
+                    if (s != std::string::npos) n = trim(n.substr(0, s));
+                }
+                if (!n.empty()) { fname = n; break; }
+            }
+            for (char& c : fname)
+                if (c == ' ' || c == '\t') c = '-';
+            if (fname.find('.') == std::string::npos) fname += ".txt";
+
+            std::string full = expand_path("~") + "\\Documents\\" + fname;
+            if (!round_trip) {
+                // "open a text file called X": create it only if it is
+                // missing, then open it in the editor.
+                cmds.push_back("ensure " + full + (text.empty() ? "" : " " + text));
+                cmds.push_back("open " + full);
+                cmds.push_back("wait 2600");
+                cmds.push_back("focus Notepad");
+                cmds.push_back("read " + full);
+                cmds.push_back("shot opened.png");
+                return cmds;
+            }
+            cmds.push_back("del " + full);
+            cmds.push_back("open notepad");
+            cmds.push_back("wait 2400");
+            cmds.push_back("focus Notepad");
+            cmds.push_back("type " + text);
+            cmds.push_back("key ctrl+s");
+            cmds.push_back("wait 2000");
+            cmds.push_back("type " + fname);
+            cmds.push_back("key enter");
+            cmds.push_back("wait 2000");
+            cmds.push_back("close Notepad");
+            cmds.push_back("waitclose Notepad 8000");
+            cmds.push_back("wait 1500");
+            cmds.push_back("open " + full);
+            cmds.push_back("wait 2600");
+            cmds.push_back("focus Notepad");
+            cmds.push_back("read " + full);
+            cmds.push_back("shot reopened.png");
+            cmds.push_back("log created, written, saved and reopened: " + full);
+            return cmds;
+        }
+    }
     for (const std::string& clause : clauses) {
         std::string low = to_lower(clause);
         auto after = [&](size_t n) { return trim(clause.substr(n)); };
@@ -1183,94 +1390,130 @@ bool Agent::run_goal(const std::string& goal) {
                     "one, or try a plain instruction like \"open notepad and type hello\".");
         return false;
     }
+    if (!config.vision) {
+        log("fail", "screenshot-based goal planning requires vision; enable vision in hawk.ini "
+                    "and use a vision-capable model");
+        return false;
+    }
 
     request_abort(false);
     save_cursor_origin();
     std::string transcript;
     std::string generated;
     bool done = false;
+    int total_steps = 0;
 
     for (int round = 0; round < config.max_rounds && !done; round++) {
+        if (total_steps >= config.max_steps) {
+            log("warn", "goal reached the maximum action count");
+            break;
+        }
         if (abort_requested()) {
             log("warn", "goal aborted");
             break;
         }
-        std::string shot;
         std::string b64;
-        if (!config.dry_run) {
-            Image full = capture_screen();
-            if (full.empty()) {
-                log("fail", "could not capture the screen");
-                break;
-            }
-            Image small = scale_to_fit(full, config.vision ? 1280 : 1024, config.vision ? 800 : 640);
-            Point c = cursor_pos();
-            Rect v = virtual_desktop();
-            Image marked = draw_marker(small, (c.x - v.x) * small.w / std::max(1, full.w),
-                                       (c.y - v.y) * small.h / std::max(1, full.h));
-            shot = take_shot("goal");
-            save_png(small, shot);  // the file the human can open afterwards
-            last_shot_ = shot;
-            std::vector<uint8_t> png;
-            // reuse the encoder to get PNG bytes for the model
-            std::string tmp = shot_dir() + "\\_model.png";
-            if (save_png(marked, tmp)) {
-                FILE* f = fopen(tmp.c_str(), "rb");
-                if (f) {
-                    fseek(f, 0, SEEK_END);
-                    long n = ftell(f);
-                    fseek(f, 0, SEEK_SET);
-                    png.resize((size_t)(n > 0 ? n : 0));
-                    if (!png.empty()) fread(png.data(), 1, png.size(), f);
-                    fclose(f);
+        Image full = capture_screen();
+        if (full.empty()) {
+            log("fail", "could not capture the screen for visual planning");
+            break;
+        }
+        Image small = scale_to_fit(full, 1280, 800);
+        if (small.empty()) {
+            log("fail", "could not prepare the screenshot for visual planning");
+            break;
+        }
+        Point c = cursor_pos();
+        Rect v = virtual_desktop();
+        Image marked = draw_marker(small, (c.x - v.x) * small.w / std::max(1, full.w),
+                                   (c.y - v.y) * small.h / std::max(1, full.h));
+        std::string shot = take_shot("goal");
+        if (shot.empty() || !save_png(small, shot)) {
+            log("fail", "could not save the screenshot used for goal planning");
+            break;
+        }
+        last_shot_ = shot;
+
+        std::vector<uint8_t> png;
+        // Reuse the PNG encoder to create the image payload for the model.
+        std::string tmp = shot_dir() + "\\_model_" + std::to_string(GetCurrentProcessId()) +
+                          "_" + std::to_string(round) + ".png";
+        if (!save_png(marked, tmp)) {
+            log("fail", "could not encode the screenshot for the vision model");
+            break;
+        }
+        FILE* f = fopen(tmp.c_str(), "rb");
+        if (f) {
+            if (fseek(f, 0, SEEK_END) == 0) {
+                long n = ftell(f);
+                if (n > 0 && fseek(f, 0, SEEK_SET) == 0) {
+                    png.resize((size_t)n);
+                    size_t read = fread(png.data(), 1, png.size(), f);
+                    if (read != png.size()) png.clear();
                 }
-                DeleteFileA(tmp.c_str());
             }
-            if (config.vision && !png.empty()) b64 = b64_encode(png);
+            fclose(f);
+        }
+        DeleteFileA(tmp.c_str());
+        if (png.empty()) {
+            log("fail", "could not read the encoded screenshot for the vision model");
+            break;
+        }
+        b64 = b64_encode(png);
+        if (b64.empty()) {
+            log("fail", "could not encode the screenshot for the vision model request");
+            break;
         }
 
         std::string prompt;
         prompt += "You are the driver of a real Windows desktop. You act by replying with commands "
                   "only, one per line, in the command language below. Nothing else: no prose, no "
-                  "code fences.\n\nGoal: " + goal + "\n\n";
+                  "code fences. The attached image is mandatory visual evidence of the current "
+                  "desktop; inspect it before deciding what to do. Do not guess coordinates or "
+                  "claim an action succeeded without seeing the result in a later screenshot.\n\n"
+                  "Goal: " + goal + "\n\n";
         prompt += command_reference();
         prompt += "\nRules:\n"
-                  "- Use absolute pixel coordinates for this screen.\n"
-                  "- Prefer clicking on things you can see in the screenshot.\n"
-                  "- After acting, verify with `shot` or `verifypixel` when useful.\n"
-                  "- If the goal is already satisfied, reply with exactly: done\n"
-                  "- Reply with at most 8 commands.\n\n";
+                  "- The screenshot is " + std::to_string(small.w) + "x" +
+                  std::to_string(small.h) + " pixels; the physical virtual desktop is " +
+                  std::to_string(v.w) + "x" + std::to_string(v.h) + " at origin (" +
+                  std::to_string(v.x) + "," + std::to_string(v.y) + "). To convert a screenshot "
+                  "point (x,y) to a command coordinate, use desktop_x + round(x * desktop_width / "
+                  "screenshot_width), desktop_y + round(y * desktop_height / screenshot_height).\n"
+                  "- Prefer visible controls and use coordinates derived from this screenshot.\n"
+                  "- Return only the next small batch of up to 3 valid commands, then wait for the "
+                  "next screenshot before choosing further actions.\n"
+                  "- Do not include `done` in a batch that also contains commands. After the "
+                  "resulting screenshot shows the goal is satisfied, reply with exactly: done\n"
+                  "- If an action failed or the screen differs from expectation, use the next "
+                  "screenshot and execution feedback to correct the plan.\n\n";
         prompt += screen_summary();
         if (!transcript.empty()) prompt += "\nWhat you already did:\n" + transcript;
-        if (!b64.empty())
-            prompt += "\nThe attached image is the current screen, downscaled. A green crosshair "
-                      "marks the current mouse position.\n";
+        prompt += "\nThe attached image is the current screen, downscaled to fit the stated "
+                  "dimensions. A green crosshair marks the current mouse position.\n";
 
         std::string reply, err;
         log("agent", "planning round " + std::to_string(round + 1) + " with " + config.model +
-                         (b64.empty() ? " (text only)" : " (with screenshot)"));
+                         " (screenshot attached: " + std::to_string(small.w) + "x" +
+                         std::to_string(small.h) + ")");
         if (!llm_chat(prompt, b64, &reply, &err)) {
             log("fail", "model call failed: " + err);
-            std::vector<std::string> local = plan_locally(goal);
-            if (!local.empty() && round == 0) {
-                log("warn", "acting without the model: the built-in planner understood " +
-                                std::to_string(local.size()) + " step(s)");
-                for (const std::string& c : local) log("agent", "planned: " + c);
-                std::string script = join_commands(local);
-                publish_script(script);
-                run_script(script);
-            } else if (local.empty()) {
-                log("info", "check the base URL, model id and key with the Model button "
-                            "(the endpoint must be OpenAI-compatible, e.g. .../v1)");
-            }
+            log("info", "no guessed script was run; check the vision-capable model, API key and "
+                        "OpenAI-compatible base URL in Model settings");
             break;
         }
         log("agent", "model said: " + reply.substr(0, 400));
 
         std::vector<std::string> cmds = parse_commands(reply);
         if (cmds.empty()) {
-            log("warn", "model returned no usable commands; stopping");
-            break;
+            transcript += "  FAIL model returned no usable commands; reply with valid command "
+                          "lines only\n";
+            log("warn", "model returned no usable commands; asking again with a fresh screenshot");
+            continue;
+        }
+        if (cmds.size() > 3) {
+            log("warn", "model returned more than 3 commands; only the next 3 will be considered");
+            cmds.resize(3);
         }
         generated += join_commands(cmds);
         publish_script(generated);  // visible in the script box, and on disk
@@ -1279,20 +1522,35 @@ bool Agent::run_goal(const std::string& goal) {
                         "nothing was executed");
             break;
         }
-        int ran = 0;
+        bool batch_failed = false;
+        bool batch_has_actions = false;
         for (const std::string& c : cmds) {
             if (to_lower(c) == "done") {
-                done = true;
+                if (!batch_has_actions && !batch_failed) {
+                    done = true;
+                } else {
+                    log("warn", "ignoring `done` in an action batch; requesting a screenshot "
+                                "to verify the result");
+                }
                 break;
             }
-            if (ran++ >= config.max_steps) break;
+            if (total_steps >= config.max_steps) {
+                log("warn", "goal reached the maximum action count");
+                break;
+            }
             if (abort_requested()) break;
             if (config.step_delay_ms > 0) sleep_ms(config.step_delay_ms);
             bool ok = step(c, 0);
+            total_steps++;
+            batch_has_actions = true;
             transcript += (ok ? "  ok   " : "  FAIL ") + c + "\n";
             log(ok ? "ok" : "fail", "[model] " + c);
+            if (!ok) {
+                batch_failed = true;
+                break;
+            }
         }
-        if (done) log("ok", "model reports the goal is complete");
+        if (done) log("ok", "model reports the goal is complete based on the latest screenshot");
     }
 
     restore_cursor_origin();

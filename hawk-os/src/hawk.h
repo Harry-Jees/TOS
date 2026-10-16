@@ -142,7 +142,7 @@ struct Config {
     bool auto_run = true;          // execute scripts the model generates
     std::string base_url = "https://integrate.api.nvidia.com/v1";
     std::string api_key;
-    std::string model = "meta/llama-3.2-90b-vision-instruct";
+    std::string model = "moonshotai/kimi-k3";  // Kimi K3 on NVIDIA NIM (vision-capable)
     bool vision = true;            // attach screenshots to model requests
 };
 
@@ -165,8 +165,9 @@ public:
     // Execute a small command script (see README). Returns true if every
     // non-optional command succeeded.
     bool run_script(const std::string& script);
-    // One-shot goal: hand the goal + a fresh screenshot to the model, execute
-    // what it asks for, look again, repeat. Empty api_key -> one heuristic turn.
+    // Goal loop: send the goal + a fresh screenshot to the model, execute a
+    // small command batch, then look again before planning the next batch.
+    // Empty api_key -> use the built-in planner for supported simple goals.
     bool run_goal(const std::string& goal);
 
     const std::vector<LogLine>& history() const { return history_; }
@@ -181,8 +182,8 @@ private:
     bool step(const std::string& line, int depth);
     // Show a generated script and keep it in workspace/ so it can be re-run.
     void publish_script(const std::string& script);
-    // A small rule-based planner, used when no model is configured or the call
-    // fails: turns "open notepad and type hello" into commands to run.
+    // A small rule-based planner for supported simple goals when no model is
+    // configured: turns "open notepad and type hello" into commands to run.
     std::vector<std::string> plan_locally(const std::string& goal);
     std::string screen_summary();
     bool llm_chat(const std::string& prompt, const std::string& image_b64,
