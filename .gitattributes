@@ -1,0 +1,2 @@
+toolchains/zig/zig.exe filter=lfs diff=lfs merge=lfs -text
+toolchains/zig.zip filter=lfs diff=lfs merge=lfs -text

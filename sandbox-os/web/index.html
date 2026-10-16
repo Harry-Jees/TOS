@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SandboxOS Console</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span> SandboxOS <small>1.0</small></div>
+  <div class="meta" id="meta">booting...</div>
+  <div class="status">
+    <span class="pill" id="agent-state">agent: idle</span>
+    <span class="pill" id="brain">brain: ?</span>
+    <span class="pill" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main>
+  <section class="left">
+    <div class="screen-wrap">
+      <canvas id="screen" width="960" height="600" tabindex="0"></canvas>
+      <div class="screen-hint">Click the screen to control the sandbox. Your mouse and keyboard drive the same machine the agent uses.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Give the agent a task</h3>
+      <div class="row">
+        <input id="task" type="text" placeholder="e.g. tidy up /home/user, write a file, then prove it renders on screen" />
+        <button id="run" class="primary">Run</button>
+        <button id="abort" class="danger">Abort</button>
+      </div>
+      <div class="quick">
+        <button data-task="Explore the machine: read /etc/motd and /var/log/boot.log, then summarise what this OS is in 3 bullet points.">Explore the machine</button>
+        <button data-task="Create /home/user/notes/plan.md with a 5 item plan, then open it in the editor window and take a screenshot.">Write a plan + screenshot</button>
+        <button data-task="Open a terminal window, type 'neofetch', press Enter, then describe what the screen shows.">Drive the terminal</button>
+        <button data-task="Break something: delete /home/user/notes/todo.md, then recreate it with better contents and verify with the shell.">Break and repair</button>
+      </div>
+      <div class="row">
+        <input id="shell" type="text" placeholder="run a shell command in the sandbox (human terminal)" />
+        <button id="shell-run">Run</button>
+      </div>
+      <pre id="shell-out" class="out"></pre>
+    </div>
+  </section>
+
+  <section class="right">
+    <div class="panel">
+      <h3>Agent console <span class="hint" id="step-hint"></span></h3>
+      <div id="feed" class="feed"></div>
+    </div>
+    <div class="panel">
+      <h3>Screenshots <span class="hint">what the agent sees / saves</span></h3>
+      <div id="shots" class="shots"></div>
+    </div>
+    <div class="panel">
+      <h3>System</h3>
+      <div id="sys" class="kv"></div>
+    </div>
+    <div class="panel">
+      <h3>Windows</h3>
+      <div id="wins" class="kv"></div>
+      <div class="quick" id="app-buttons"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>virtual screen 960x600</span>
+  <span id="foot-disk"></span>
+  <span id="foot-port"></span>
+  <span class="grow"></span>
+  <a href="/audit?n=80" target="_blank">audit log (json)</a>
+  <a href="/state" target="_blank">state (json)</a>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

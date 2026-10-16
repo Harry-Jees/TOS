@@ -1,0 +1,18 @@
+# Click something by colour instead of by coordinates - the usual way to hit a
+# button you cannot predict the position of.
+#
+# Replace RRGGBB with the colour you are hunting for: run the app, hover the
+# target, read the value under "cursor x,y" in the preview caption, or use
+# `pixel x y` to print the colour at a spot.
+#
+# Always dry-run first:  hawk.exe --dry-run --file examples\find-and-click.hawk
+
+shot before-look.png
+
+# find <RRGGBB> <tolerance> <move|click|double>
+try find 1E78FF 20 move
+try find 1E78FF 20 double
+
+verifypixel 5 5 000000 0
+
+log Nothing found? Widen the tolerance or pick another colour with `pixel x y`

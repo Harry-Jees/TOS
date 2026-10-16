@@ -1,0 +1,2 @@
+0
+8007 1125899907531764 1747954900000000000 e1aa862a264022e073bb8f155969bbea 1 libc\mingw\lib-common\api-ms-win-crt-math-l1-1-0.def.in

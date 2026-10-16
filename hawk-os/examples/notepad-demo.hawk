@@ -1,0 +1,26 @@
+# Drive a real application: open Notepad, type with synthetic keystrokes and
+# save the file through Notepad's own Save dialog. After a run there should be
+# a hawk-note.txt in your Documents folder containing exactly the typed line.
+#
+# Try it safely first:  hawk.exe --dry-run --file examples\notepad-demo.hawk
+# Then for real:        hawk.exe --file examples\notepad-demo.hawk
+#
+# Hold ESC or press Ctrl+Alt+H at any point to abort.
+
+open notepad
+wait 2200
+focus Notepad
+
+type Hawk OS typed this with real keystrokes, then saved it.
+wait 400
+
+key ctrl+s
+wait 1800
+type hawk-note.txt
+key enter
+wait 1800
+
+shot notepad-result.png
+windows 6
+
+log Notepad demo complete - the file should hold the typed line

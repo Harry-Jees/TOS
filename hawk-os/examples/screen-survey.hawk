@@ -1,0 +1,17 @@
+# Survey this machine: what is on screen, where the cursor is, what is running.
+# Read-only - it looks and reports, and never touches the mouse or keyboard.
+#   hawk.exe --file examples\screen-survey.hawk
+
+log Starting a read-only survey of the desktop
+
+monitors
+windows 15
+cursor
+
+shot survey-full.png
+region 0 0 400 200 survey-topleft.png
+
+pixel 10 10
+pixel 800 450
+
+log Survey finished - see shots\survey-*.png
