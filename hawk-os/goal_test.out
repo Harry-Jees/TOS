@@ -1,0 +1,4 @@
+[agent ] planning round 1 with nvidia/nemotron-3.5-super-vl-120b-a12b (screenshot attached: 1280x720)
+[fail  ] model call failed: HTTP 403: {"status":403,"title":"Forbidden","detail":"Authorization failed"}
+[info  ] no guessed script was run; check the vision-capable model, API key and OpenAI-compatible base URL in Model settings
+[warn  ] goal stopped without a completion signal

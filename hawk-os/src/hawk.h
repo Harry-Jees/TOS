@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #define HAWK_VERSION "1.0.0"
@@ -78,6 +79,33 @@ Image draw_marker(const Image& src, int x, int y);  // crosshair, for the model
 std::string color_hex(uint32_t bgr);
 uint32_t parse_color(const std::string& hex);  // "RRGGBB" -> BGR, 0xFFFFFFFF on error
 
+// ---------------------------------------------------------- vision primitives --
+// Everything below is computed locally from real pixels: no model, no network.
+// They are what lets a script (or the planner) "see" a screenshot well enough
+// to decide where to click.
+struct UiElement {
+    Rect rect{};          // bounding box, in the coordinates of the image given
+    uint32_t color = 0;   // dominant fill colour (BGR, same layout as Image::at)
+    int cells = 0;        // how much of the box is that fill colour
+    double score = 0;     // higher = more likely to be an interactive control
+    const char* kind = "region";  // button | field | panel | region
+};
+
+// Rectangular regions of near-uniform colour (buttons, fields, panels,
+// toolbars), best first. Used to describe a screenshot to a model and to let
+// scripts act on what is actually on screen.
+std::vector<UiElement> detect_elements(const Image& img, int max_elements = 12);
+// The most common colours, most frequent first, as (BGR, pixel count).
+std::vector<std::pair<uint32_t, int>> dominant_colors(const Image& img, int top_n = 6);
+// The bounding box of the largest blob of a colour ("that whole blue button",
+// not one pixel of it). Empty result -> false.
+bool find_color_area(const Image& img, uint32_t bgr, int tolerance, Rect* out);
+// Overlay a labelled coordinate grid so a vision model can read positions
+// straight off the image instead of guessing at them.
+Image draw_grid(const Image& src, int step);
+// One-line-per-element description: "1. button 612,455 132x34 #0A84FF centre 678,472".
+std::string describe_elements(const std::vector<UiElement>& els);
+
 bool save_png(const Image& img, const std::string& path);
 bool save_bmp(const Image& img, const std::string& path);
 std::string b64_encode(const std::vector<uint8_t>& data);
@@ -137,12 +165,17 @@ struct Config {
     bool dry_run = false;          // log actions, do not perform them
     bool restore_cursor = true;    // put the cursor back when a run finishes
     int step_delay_ms = 350;       // pause between actions (visible + safe)
-    int max_rounds = 8;            // LLM planning rounds
-    int max_steps = 40;            // script steps per round
+    int max_rounds = 14;           // LLM plan/verify rounds per goal
+    int max_steps = 150;           // total commands a goal may execute
+    int segment_size = 6;          // planned commands run between vision checks
     bool auto_run = true;          // execute scripts the model generates
     std::string base_url = "https://integrate.api.nvidia.com/v1";
     std::string api_key;
-    std::string model = "moonshotai/kimi-k3";  // Kimi K3 on NVIDIA NIM (vision-capable)
+    // The default must actually be able to *see*: Nemotron 3.5 Super VL is
+    // NVIDIA's first-party vision-language model on NIM, built for reading
+    // screenshots. Any other OpenAI-compatible vision model can be set in
+    // hawk.ini, the Model dialog, or HAWK_MODEL.
+    std::string model = "nvidia/nemotron-3.5-super-vl-120b-a12b";
     bool vision = true;            // attach screenshots to model requests
 };
 
@@ -165,6 +198,9 @@ public:
     // Execute a small command script (see README). Returns true if every
     // non-optional command succeeded.
     bool run_script(const std::string& script);
+    // Read the screen the way a person glances at it: capture it, detect the
+    // controls on it, and log a plain-text description. Works with no model.
+    bool look();
     // Goal loop: send the goal + a fresh screenshot to the model, execute a
     // small command batch, then look again before planning the next batch.
     // Empty api_key -> use the built-in planner for supported simple goals.
@@ -179,7 +215,20 @@ private:
     std::string last_shot_;
     bool stop_ = false;
 
+    // The screenshot the model last saw, and how its pixel space maps onto the
+    // real desktop. `sclick`/`smove`/`sdrag` take coordinates read straight off
+    // that image and touch the matching place on the real screen.
+    struct ShotMap {
+        int w = 0, h = 0;   // screenshot size in its own pixels
+        Rect desk{};        // the virtual desktop it came from
+        bool valid = false;
+    } map_;
+
     bool step(const std::string& line, int depth);
+    void remember_map(const Image& shot, const Rect& desk);
+    bool to_desktop(int sx, int sy, Point* out) const;
+    // Local, model-free reading of a screenshot: dominant colours + elements.
+    std::string visual_report(const Image& img);
     // Show a generated script and keep it in workspace/ so it can be re-run.
     void publish_script(const std::string& script);
     // A small rule-based planner for supported simple goals when no model is
@@ -187,7 +236,7 @@ private:
     std::vector<std::string> plan_locally(const std::string& goal);
     std::string screen_summary();
     bool llm_chat(const std::string& prompt, const std::string& image_b64,
-                  std::string* reply, std::string* err);
+                  std::string* reply, std::string* err, int max_tokens = 900);
     std::vector<std::string> parse_commands(const std::string& reply);
 };
 

@@ -6,6 +6,25 @@
 #include <cstring>
 
 namespace hawk {
+namespace {
+
+// A click that lands on a background window can be swallowed by Windows as
+// the activation click: the window comes up, but the control never sees the
+// press. Multi-step flows (editor -> save dialog -> IDE) depend on every
+// click landing, so bring the window under the cursor to the front first -
+// the attention a person pays before they click. No-op when the window is
+// already in front, so it costs nothing in the common case.
+void raise_window_under_cursor() {
+    Point p = cursor_pos();
+    HWND wnd = WindowFromPoint(POINT{p.x, p.y});
+    if (!wnd) return;
+    HWND root = GetAncestor(wnd, GA_ROOT);
+    if (!root || root == GetForegroundWindow()) return;
+    focus_window(root);
+    Sleep(70);  // let the window finish coming up before the press arrives
+}
+
+}  // namespace
 
 static volatile LONG g_stop = 0;
 static Point g_origin{};
@@ -120,6 +139,7 @@ bool click_mouse(const std::string& button, int times, std::string* err) {
         if (err) *err = "aborted before click";
         return false;
     }
+    raise_window_under_cursor();
     if (times < 1) times = 1;
     if (times > 3) times = 3;
     for (int i = 0; i < times; i++) {
@@ -133,6 +153,7 @@ bool click_mouse(const std::string& button, int times, std::string* err) {
 
 bool drag_mouse(int x1, int y1, int x2, int y2, const std::string& button, std::string* err) {
     if (!move_cursor(x1, y1, err)) return false;
+    raise_window_under_cursor();
     Sleep(30);
     send_button(button.c_str(), true);
     Sleep(30);

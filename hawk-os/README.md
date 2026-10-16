@@ -27,16 +27,33 @@ Everything below is a real action on the real machine:
 
 | Area | Commands |
 | --- | --- |
-| **See** | `shot`, `shotwin <title>`, `region x y w h`, `windows`, `monitors`, `cursor`, `pixel x y`, `find RRGGBB [tol] [move\|click\|double]` |
-| **Touch** | `move x y`, `move rel dx dy`, `click [left\|right\|double] [x y]`, `drag x1 y1 x2 y2`, `scroll <notches>` |
+| **See** | `shot`, `shotwin <title>`, `region x y w h`, `look`, `elements [x y w h]`, `windows`, `monitors`, `cursor`, `pixel x y` |
+| **Touch** | `move x y`, `move rel dx dy`, `click [left\|right\|double] [x y]`, `clickel <rank> [right\|double]`, `drag x1 y1 x2 y2`, `scroll <notches>` |
+| **Aim at a screenshot** | `smove x y`, `sclick [btn] x y`, `sdrag x1 y1 x2 y2` - coordinates read off the last screenshot; Hawk maps them onto the real screen itself |
 | **Type** | `type <text>` (real Unicode keystrokes, `\n` is Enter), `key ctrl+s`, `key alt+f4`, `key enter` |
-| **Windows** | `focus <title part>`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
+| **Windows** | `focus <title part>`, `waitfocus <title part> [ms]`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
 | **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (relative paths land in `workspace/`; `~` starts at your profile folder) |
 | **Flow** | `wait <ms>`, `try <cmd>`, `verifypixel x y RRGGBB [tol]`, `log <text>`, `# comment`, `done` |
 
-`find` is the one that makes "press the button" possible without knowing any
-coordinates: it scans a fresh screenshot for a colour and can move/click it
-directly.
+`find` / `findarea` are what make "press the button" possible without knowing
+any coordinates: they scan a fresh screenshot for a colour - `find` for a
+pixel, `findarea` for a whole region (a button, not one pixel of it) - and can
+move/click what they found.
+
+**Scripts can see.** `look` captures the screen, detects the controls on it
+(buttons, fields, panels) entirely locally - no model involved - and logs a
+plain-text description with clickable coordinates. `elements [x y w h]` does
+the same for a region, ranked by how control-like each one looks, and
+`clickel 2` clicks the second-ranked control. `sclick 320 480` takes a point
+read straight off the last screenshot and clicks the real screen there: Hawk
+doing the coordinate arithmetic is one less thing to get wrong. So a script
+like this works without any hardcoded pixel:
+
+```
+look            # what is on the screen right now?
+sclick 320 480  # click the button at 320,480 of that screenshot
+findarea FF840A 60 click   # or: click the biggest blue region on screen
+```
 
 ## 2. The app window
 
@@ -47,8 +64,11 @@ One dark window, no menus to hunt through:
   made. Tick **Click-through** and clicking the preview really clicks your
   screen at that point (with self-click suppression so it cannot loop).
 * **Right** — the **Agent**: a goal box, a script box, Run goal / Run script /
-  **STOP**, Capture, Shots folder, Model settings, and a colour-coded log
-  (`ok` / `fail` / `action` / `agent`).
+  **STOP**, Capture, Shots folder, Model settings, and an activity log with
+  timestamps and level tags.
+* A **run-state pill** in the header (IDLE / RUNNING / AGENT RUNNING /
+  STOPPING) and a **DRY RUN** pill whenever nothing will be touched, so the
+  mode of the next action is readable across the room.
 * Quick actions load working examples: *Click middle*, *Notepad demo*, *Help*.
 * The window publishes its own geometry to `ui-layout.txt`, which is how a test
   (or another Hawk OS run) can click the app's buttons by coordinate.
@@ -56,18 +76,33 @@ One dark window, no menus to hunt through:
 **Model settings** (the *Model* button) stores an API key, a base URL and a
 model id in `hawk.ini` next to the executable; the key is never printed to the
 log, the screen or the terminal. Any OpenAI-compatible endpoint works — NVIDIA
-NIM is the default (`https://integrate.api.nvidia.com/v1`,
-`meta/llama-3.2-90b-vision-instruct`). Or set `HAWK_API_KEY`, `HAWK_BASE_URL`,
-`HAWK_MODEL`, or pass `--key-file <path>`.
+NIM is the default (`https://integrate.api.nvidia.com/v1`) with a vision model
+that can actually read screenshots (`nvidia/nemotron-3.5-super-vl-120b-a12b`,
+NVIDIA's first-party vision-language model). Or set `HAWK_API_KEY`,
+`HAWK_BASE_URL`, `HAWK_MODEL`, or pass `--key-file <path>`.
 
-With a vision-capable model configured, **Run goal** sends the goal, a fresh
-downscaled screenshot, the screenshot-to-desktop coordinate mapping, and the
-window list. It executes at most three model commands, captures the resulting
-screen, and asks the model what to do next. It only accepts `done` from a
-later screenshot check; if a model request fails, it reports the error rather
-than silently substituting a guessed script. A model key is required for
-screenshot-based planning. Without a key, supported simple goals can still use
-the built-in planner, and existing scripts can still be run directly.
+**Run goal** is built for multi-step tasks, not one-shot clicks — "open my
+editor, write this code, save it and open it again" is the shape of task it is
+for. It works in three phases, all grounded in fresh screenshots:
+
+1. **Plan** — the goal, a fresh screenshot (downscaled, overlaid with a labelled
+   coordinate grid and the mouse position), a local analysis of the controls
+   detected on that screenshot, and the window list go to the model, which
+   writes the *complete* script for the whole task.
+2. **Execute** — Hawk runs the script in segments through its own verified step
+   engine. Each command's real result (ok or fail) is recorded; a failed step
+   stops the segment instead of ploughing on.
+3. **Verify** — after each segment (and after any failure) a new screenshot plus
+   the execution transcript goes back to the model. It answers `done` (only a
+   later screenshot may declare that), `continue`, or a small batch of
+   corrective commands that are inserted in front of the remaining plan.
+
+The generated script is always shown in the script box and saved to
+`workspace/`, so "the agent wrote a script and ran it" leaves something you can
+re-run. If a model request fails, it reports the error rather than silently
+substituting a guessed script. A model key is required for screenshot-based
+planning; without one, supported simple goals can still use the built-in
+planner, and existing scripts can still be run directly.
 
 ## 3. Build
 

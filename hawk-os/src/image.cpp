@@ -11,6 +11,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace hawk {
 
@@ -366,6 +371,366 @@ bool find_color(const Image& img, uint32_t bgr, int tolerance, Point* out) {
         return true;
     }
     return false;
+}
+
+// ------------------------------------------------------ vision primitives --
+// Local analysis of real pixels. No model, no network, no guessing: these are
+// the functions that let a script see a screenshot well enough to act on it.
+
+static int color_dist(uint32_t a, uint32_t b) {
+    return abs((int)(a & 0xFF) - (int)(b & 0xFF)) +
+           abs((int)((a >> 8) & 0xFF) - (int)((b >> 8) & 0xFF)) +
+           abs((int)((a >> 16) & 0xFF) - (int)((b >> 16) & 0xFF));
+}
+
+// Mean colour of a box (clamped to the image), 0 when the box is empty.
+static uint32_t box_mean(const Image& img, int x0, int y0, int x1, int y1) {
+    long r = 0, g = 0, b = 0, n = 0;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > img.w) x1 = img.w;
+    if (y1 > img.h) y1 = img.h;
+    for (int y = y0; y < y1; y++) {
+        const uint8_t* p = img.row(y) + (size_t)x0 * 4;
+        for (int x = x0; x < x1; x++, p += 4) {
+            b += p[0];
+            g += p[1];
+            r += p[2];
+            n++;
+        }
+    }
+    if (!n) return 0;
+    return (uint32_t)(b / n) | ((uint32_t)(g / n) << 8) | ((uint32_t)(r / n) << 16);
+}
+
+std::vector<std::pair<uint32_t, int>> dominant_colors(const Image& img, int top_n) {
+    std::vector<std::pair<uint32_t, int>> out;
+    if (img.empty()) return out;
+    // Quantise to 5 bits per channel (32768 buckets), counting a 2x2 sample.
+    static long counts[32768];
+    static long sr[32768], sg[32768], sb[32768];
+    static bool cleared = false;
+    if (!cleared) {
+        memset(counts, 0, sizeof(counts));
+        memset(sr, 0, sizeof(sr));
+        memset(sg, 0, sizeof(sg));
+        memset(sb, 0, sizeof(sb));
+        cleared = true;
+    } else {
+        for (long* p : {counts, sr, sg, sb}) memset(p, 0, sizeof(long) * 32768);
+    }
+    for (int y = 0; y < img.h; y += 2) {
+        const uint8_t* p = img.row(y);
+        for (int x = 0; x < img.w; x += 2, p += 8) {
+            uint32_t c = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
+            int key = (((c >> 3) & 0x1F) << 10) | (((c >> 11) & 0x1F) << 5) | ((c >> 19) & 0x1F);
+            counts[key]++;
+            sb[key] += p[0];
+            sg[key] += p[1];
+            sr[key] += p[2];
+        }
+    }
+    std::vector<std::pair<int, long>> by_count;
+    for (int k = 0; k < 32768; k++)
+        if (counts[k] > 0) by_count.push_back({k, counts[k]});
+    std::sort(by_count.begin(), by_count.end(),
+              [](const std::pair<int, long>& a, const std::pair<int, long>& b) {
+                  return a.second > b.second;
+              });
+    for (size_t i = 0; i < by_count.size() && (int)out.size() < top_n; i++) {
+        int k = by_count[i].first;
+        long n = counts[k];
+        uint32_t bgr = (uint32_t)(sb[k] / n) | ((uint32_t)(sg[k] / n) << 8) |
+                       ((uint32_t)(sr[k] / n) << 16);
+        out.push_back({bgr, (int)(by_count[i].second * 4)});  // counts were sampled 1-in-4
+    }
+    return out;
+}
+
+std::vector<UiElement> detect_elements(const Image& img, int max_elements) {
+    std::vector<UiElement> out;
+    if (img.empty() || img.w < 96 || img.h < 96 || max_elements <= 0) return out;
+
+    // 1. Split the image into small cells and record each cell's mean colour
+    //    and how uniform it is. UI chrome is made of flat regions; photographs
+    //    and gradients are not, which is exactly the distinction we want.
+    const int C = 6;  // cell size in pixels
+    int gw = img.w / C, gh = img.h / C;
+    if (gw < 10 || gh < 10) return out;
+    std::vector<uint32_t> mean((size_t)gw * gh, 0);
+    std::vector<uint8_t> flat((size_t)gw * gh, 0);
+    for (int cy = 0; cy < gh; cy++) {
+        for (int cx = 0; cx < gw; cx++) {
+            int x0 = cx * C + 1, x1 = (cx + 1) * C - 1;
+            int y0 = cy * C + 1, y1 = (cy + 1) * C - 1;
+            uint32_t first = img.at(x0, y0);
+            int worst = 0, n = 0;
+            long r = 0, g = 0, b = 0;
+            for (int y = y0; y < y1; y += 2) {
+                const uint8_t* p = img.row(y) + (size_t)x0 * 4;
+                for (int x = x0; x < x1; x += 2, p += 8) {
+                    uint32_t c = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
+                    b += p[0];
+                    g += p[1];
+                    r += p[2];
+                    n++;
+                    int d = color_dist(c, first);
+                    if (d > worst) worst = d;
+                }
+            }
+            if (!n) n = 1;
+            size_t idx = (size_t)cy * gw + cx;
+            mean[idx] = (uint32_t)(b / n) | ((uint32_t)(g / n) << 8) | ((uint32_t)(r / n) << 16);
+            flat[idx] = (uint8_t)(worst > 255 ? 255 : worst);
+        }
+    }
+
+    // 2. Background = the most common colour among the flat cells.
+    std::vector<std::pair<uint32_t, int>> dom;
+    {
+        std::map<uint32_t, int> tally;
+        for (size_t i = 0; i < mean.size(); i++)
+            if (flat[i] <= 40) tally[mean[i] & 0xF8F8F8u]++;
+        std::vector<std::pair<uint32_t, int>> v(tally.begin(), tally.end());
+        std::sort(v.begin(), v.end(), [](const std::pair<uint32_t, int>& a,
+                                         const std::pair<uint32_t, int>& b) {
+            return a.second > b.second;
+        });
+        for (size_t i = 0; i < v.size() && i < 6; i++) dom.push_back(v[i]);
+    }
+    uint32_t bg = dom.empty() ? 0x00282828u : dom[0].first;
+
+    // 3. Group neighbouring flat cells of similar colour into components.
+    std::vector<int> label(mean.size(), -1);
+    struct Comp {
+        int minx = 1 << 30, miny = 1 << 30, maxx = -1, maxy = -1, cells = 0;
+        long r = 0, g = 0, b = 0;
+    };
+    std::vector<Comp> comps;
+    std::vector<int> stack;
+    for (int cy = 0; cy < gh; cy++) {
+        for (int cx = 0; cx < gw; cx++) {
+            size_t start = (size_t)cy * gw + cx;
+            if (label[start] >= 0 || flat[start] > 40) continue;
+            int id = (int)comps.size();
+            comps.push_back(Comp{});
+            stack.clear();
+            stack.push_back((int)start);
+            label[start] = id;
+            while (!stack.empty()) {
+                int cur = stack.back();
+                stack.pop_back();
+                int x = cur % gw, y = cur / gw;
+                Comp& c = comps[id];
+                c.cells++;
+                c.b += mean[cur] & 0xFF;
+                c.g += (mean[cur] >> 8) & 0xFF;
+                c.r += (mean[cur] >> 16) & 0xFF;
+                if (x < c.minx) c.minx = x;
+                if (y < c.miny) c.miny = y;
+                if (x > c.maxx) c.maxx = x;
+                if (y > c.maxy) c.maxy = y;
+                const int nx[4] = {x - 1, x + 1, x, x}, ny[4] = {y, y, y - 1, y + 1};
+                for (int k = 0; k < 4; k++) {
+                    if (nx[k] < 0 || ny[k] < 0 || nx[k] >= gw || ny[k] >= gh) continue;
+                    int ni = ny[k] * gw + nx[k];
+                    if (label[ni] >= 0 || flat[ni] > 40) continue;
+                    if (color_dist(mean[ni], mean[cur]) > 36) continue;
+                    label[ni] = id;
+                    stack.push_back(ni);
+                }
+            }
+        }
+    }
+
+    // 4. Turn the solid components into elements and score how control-like
+    //    each one looks: solid, saturated, the right size, not the whole
+    //    desktop (that is just a background panel).
+    for (const Comp& c : comps) {
+        int w = (c.maxx - c.minx + 1) * C, h = (c.maxy - c.miny + 1) * C;
+        if (w < 44 || h < 14 || w > img.w * 3 / 4 || h > img.h * 3 / 4) continue;
+        double fill = (double)c.cells / ((double)(c.maxx - c.minx + 1) * (c.maxy - c.miny + 1));
+        if (fill < 0.72) continue;
+        uint32_t color = (uint32_t)(c.b / c.cells) | ((uint32_t)(c.g / c.cells) << 8) |
+                         ((uint32_t)(c.r / c.cells) << 16);
+        int rr = (int)(color & 0xFF), gg = (int)((color >> 8) & 0xFF), bb = (int)((color >> 16) & 0xFF);
+        int sat = std::max(std::max(rr, gg), bb) - std::min(std::min(rr, gg), bb);
+        double contrast = color_dist(color, bg) / 510.0;  // 0..1
+        double ar = w / (double)h;
+        double shape = 0;
+        const char* kind = "region";
+        if (h >= 18 && h <= 52 && ar >= 1.6 && ar <= 9.0 && w <= 460) {
+            shape = 1.0;  // a button-sized strip
+            kind = "button";
+        } else if (h >= 16 && h <= 44 && ar >= 2.0 && w <= 900) {
+            shape = 0.7;
+            kind = "field";
+        } else if (w >= 120 && h >= 90) {
+            shape = 0.35;
+            kind = "panel";
+        }
+        if (shape <= 0) continue;
+        UiElement e;
+        e.rect = Rect{c.minx * C, c.miny * C, w, h};
+        e.color = color;
+        e.cells = c.cells;
+        e.kind = kind;
+        e.score = 0.45 * shape + 0.35 * contrast + 0.20 * (sat / 255.0);
+        if (color_dist(color, bg) < 30) e.score *= 0.35;  // same-ish as the background
+        out.push_back(e);
+    }
+
+    std::sort(out.begin(), out.end(), [](const UiElement& a, const UiElement& b) {
+        if (a.score != b.score) return a.score > b.score;
+        return a.rect.w * a.rect.h > b.rect.w * b.rect.h;
+    });
+
+    // 5. Drop boxes that are just the inside of a box we already kept.
+    std::vector<UiElement> kept;
+    for (const UiElement& e : out) {
+        bool dup = false;
+        for (const UiElement& k : kept) {
+            int ix = std::max(0, std::min(e.rect.x + e.rect.w, k.rect.x + k.rect.w) -
+                                     std::max(e.rect.x, k.rect.x));
+            int iy = std::max(0, std::min(e.rect.y + e.rect.h, k.rect.y + k.rect.h) -
+                                     std::max(e.rect.y, k.rect.y));
+            if ((double)(ix * iy) / (double)(e.rect.w * e.rect.h) > 0.82) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) kept.push_back(e);
+        if ((int)kept.size() >= max_elements) break;
+    }
+    return kept;
+}
+
+std::string describe_elements(const std::vector<UiElement>& els) {
+    std::string out;
+    for (size_t i = 0; i < els.size(); i++) {
+        const UiElement& e = els[i];
+        char line[256];
+        snprintf(line, sizeof(line), "%2d. %-6s %4d,%-4d %3dx%-3d #%s  centre %d,%d\n",
+                 (int)i + 1, e.kind, e.rect.x, e.rect.y, e.rect.w, e.rect.h,
+                 color_hex(e.color).c_str(), e.rect.x + e.rect.w / 2, e.rect.y + e.rect.h / 2);
+        out += line;
+    }
+    return out;
+}
+
+bool find_color_area(const Image& img, uint32_t bgr, int tolerance, Rect* out) {
+    if (img.empty()) return false;
+    if (tolerance < 0) tolerance = 0;
+    const int C = 4;
+    int gw = img.w / C, gh = img.h / C;
+    if (gw <= 0 || gh <= 0) return false;
+    std::vector<uint8_t> hit((size_t)gw * gh, 0);
+    for (int cy = 0; cy < gh; cy++) {
+        for (int cx = 0; cx < gw; cx++) {
+            uint32_t m = box_mean(img, cx * C, cy * C, (cx + 1) * C, (cy + 1) * C);
+            if (color_dist(m, bgr) <= tolerance) hit[(size_t)cy * gw + cx] = 1;
+        }
+    }
+    std::vector<uint8_t> seen(hit.size(), 0);
+    std::vector<int> stack;
+    Rect best{};
+    long best_cells = 0;
+    for (int start = 0; start < gw * gh; start++) {
+        if (!hit[start] || seen[start]) continue;
+        stack.clear();
+        stack.push_back(start);
+        seen[start] = 1;
+        int minx = gw, miny = gh, maxx = -1, maxy = -1;
+        long cells = 0;
+        while (!stack.empty()) {
+            int cur = stack.back();
+            stack.pop_back();
+            int x = cur % gw, y = cur / gw;
+            cells++;
+            if (x < minx) minx = x;
+            if (y < miny) miny = y;
+            if (x > maxx) maxx = x;
+            if (y > maxy) maxy = y;
+            const int nx[4] = {x - 1, x + 1, x, x}, ny[4] = {y, y, y - 1, y + 1};
+            for (int k = 0; k < 4; k++) {
+                if (nx[k] < 0 || ny[k] < 0 || nx[k] >= gw || ny[k] >= gh) continue;
+                int ni = ny[k] * gw + nx[k];
+                if (!hit[ni] || seen[ni]) continue;
+                seen[ni] = 1;
+                stack.push_back(ni);
+            }
+        }
+        if (cells > best_cells) {
+            best_cells = cells;
+            best = Rect{minx * C, miny * C, (maxx - minx + 1) * C, (maxy - miny + 1) * C};
+        }
+    }
+    if (best_cells <= 0 || best.w < 2 || best.h < 2) return false;
+    if (out) *out = best;
+    return true;
+}
+
+// A 3x5 bitmap font, enough to label a grid. Rows top to bottom, 3 bits each.
+static const uint8_t DIGIT_ROWS[10][5] = {
+    {7, 5, 5, 5, 7},  // 0
+    {2, 6, 2, 2, 7},  // 1
+    {7, 1, 7, 4, 7},  // 2
+    {7, 1, 7, 1, 7},  // 3
+    {5, 5, 7, 1, 1},  // 4
+    {7, 4, 7, 1, 7},  // 5
+    {7, 4, 7, 5, 7},  // 6
+    {7, 1, 1, 1, 1},  // 7
+    {7, 5, 7, 5, 7},  // 8
+    {7, 5, 7, 1, 7},  // 9
+};
+
+static void draw_digits(Image& img, int value, int x, int y, int scale, uint32_t ink) {
+    std::string s = std::to_string(value);
+    for (char ch : s) {
+        if (ch < '0' || ch > '9') continue;
+        const uint8_t* rows = DIGIT_ROWS[ch - '0'];
+        for (int r = 0; r < 5; r++)
+            for (int c = 0; c < 3; c++)
+                if (rows[r] & (4 >> c))
+                    for (int dy = 0; dy < scale; dy++)
+                        for (int dx = 0; dx < scale; dx++)
+                            img.set(x + c * scale + dx, y + r * scale + dy, ink);
+        x += 4 * scale;
+    }
+}
+
+Image draw_grid(const Image& src, int step) {
+    Image out = src;
+    if (out.empty() || step < 40) return out;
+    // Lines blend with the backdrop: light ink on a dark screen, dark ink on a
+    // light one, so the overlay never washes out what it is labelling.
+    uint32_t avg = box_mean(out, 0, 0, out.w, out.h);
+    int lum = (int)((avg & 0xFF) + ((avg >> 8) & 0xFF) + ((avg >> 16) & 0xFF));
+    bool dark = lum < 384;
+    uint32_t line = dark ? 0x005A5A5Au : 0x00A0A0A0u;
+    uint32_t ink = dark ? 0x00F0F0F0u : 0x00202020u;
+    uint32_t plate = dark ? 0x00141414u : 0x00F0F0F0u;
+
+    for (int x = step; x < out.w; x += step) {
+        for (int y = 0; y < out.h; y += 3) {
+            out.set(x, y, line);
+            out.set(x + 1, y, line);
+        }
+        // label the line with the x it marks, just under the top edge
+        for (int i = -2; i < 14; i++)
+            for (int j = -2; j < 9; j++) out.set(x + 2 + i, 2 + j, plate);
+        draw_digits(out, x, x + 3, 3, 2, ink);
+    }
+    for (int y = step; y < out.h; y += step) {
+        for (int x = 0; x < out.w; x += 3) {
+            out.set(x, y, line);
+            out.set(x, y + 1, line);
+        }
+        for (int i = -2; i < 22; i++)
+            for (int j = -2; j < 9; j++) out.set(2 + i, y + 2 + j, plate);
+        draw_digits(out, y, 3, y + 3, 2, ink);
+    }
+    return out;
 }
 
 }  // namespace hawk

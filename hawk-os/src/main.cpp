@@ -67,10 +67,11 @@ static void usage() {
     printf("  --focus <title part>   raise a window\n");
     printf("  --selftest             prove capture + physical input work\n\n");
     printf("Options: --dry-run --delay <ms> --no-restore --key-file <path> --key <key>\n");
-    printf("         --model <id> --base-url <url> --no-vision --rounds <n>\n");
+    printf("         --model <id> --base-url <url> --no-vision --rounds <n> --steps <n>\n");
     printf("         --plan-only   let the model write a script but do not run it\n\n");
-    printf("Script commands: shot shotwin region move click drag scroll type key focus\n");
-    printf("                 open close wait pixel find verifypixel windows monitors\n");
+    printf("Script commands: shot shotwin region look elements clickel move click drag\n");
+    printf("                 scroll smove sclick sdrag type key focus waitfocus open close\n");
+    printf("                 wait waitclose pixel find findarea verifypixel windows monitors\n");
     printf("                 cursor write mkdir log try done\n");
 }
 
@@ -403,6 +404,7 @@ int run_cli(int argc, char** argv) {
         else if (a == "--vision") cfg.vision = true;
         else if (a == "--delay") { std::string v = next("--delay"); if (!v.empty()) cfg.step_delay_ms = atoi(v.c_str()); }
         else if (a == "--rounds") { std::string v = next("--rounds"); if (!v.empty()) cfg.max_rounds = atoi(v.c_str()); }
+        else if (a == "--steps") { std::string v = next("--steps"); if (!v.empty()) cfg.max_steps = atoi(v.c_str()); }
         else if (a == "--model") cfg.model = next("--model");
         else if (a == "--base-url") cfg.base_url = next("--base-url");
         else if (a == "--key") cfg.api_key = next("--key");

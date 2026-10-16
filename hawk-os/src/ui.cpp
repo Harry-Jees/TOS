@@ -14,6 +14,10 @@
 #include <cstring>
 #include <thread>
 
+#ifndef ES_DISABLENOSCROLL  // missing from the bundled headers; it is 0x00020000
+#define ES_DISABLENOSCROLL 0x00020000L
+#endif
+
 namespace hawk {
 
 // --------------------------------------------------------------- constants --
@@ -37,6 +41,9 @@ enum {
     ID_QUICK3,
     ID_QUICK4,
     ID_STATUS,
+    ID_LBL_GOAL,
+    ID_LBL_SCRIPT,
+    ID_LBL_LOG,
     ID_HOTKEY_STOP = 1,
 };
 
@@ -59,16 +66,20 @@ static const COLORREF C_BTN = RGB(54, 54, 62);
 static const COLORREF C_BTN_HI = RGB(70, 70, 80);
 static const COLORREF C_LINE = RGB(60, 60, 68);
 static const COLORREF C_FIELD = RGB(17, 17, 20);
+static const COLORREF C_OK = RGB(70, 200, 120);
+static const COLORREF C_WARN = RGB(255, 190, 70);
+static const COLORREF C_OFF = RGB(120, 120, 132);
 
 struct UiState {
     HWND hwnd = nullptr;
     HWND goal = nullptr, script = nullptr, log = nullptr, status = nullptr;
+    HWND lbl_goal = nullptr, lbl_script = nullptr, lbl_log = nullptr;
     HWND btn_goal = nullptr, btn_script = nullptr, btn_stop = nullptr, btn_capture = nullptr;
     HWND btn_folder = nullptr, btn_settings = nullptr, btn_clear = nullptr;
     HWND chk_dry = nullptr, chk_click = nullptr, chk_restore = nullptr, chk_autorun = nullptr;
     HWND quick1 = nullptr, quick2 = nullptr, quick3 = nullptr, quick4 = nullptr;
 
-    HFONT f_ui = nullptr, f_bold = nullptr, f_title = nullptr, f_mono = nullptr;
+    HFONT f_ui = nullptr, f_bold = nullptr, f_title = nullptr, f_mono = nullptr, f_label = nullptr;
     HBRUSH b_bg = nullptr, b_panel = nullptr, b_field = nullptr, b_log = nullptr;
     Image preview;
     Rect preview_rect{};      // where the screen image is drawn (client coords)
@@ -80,6 +91,8 @@ struct UiState {
     bool auto_run = true;
     bool follow_log = true;
     std::string status_text = "idle";
+    std::string run_state = "idle";   // idle | running | stopping
+    std::string run_kind;             // goal | script (what is running)
     std::string last_shot;
 };
 
@@ -123,10 +136,13 @@ static HWND make_button(HWND parent, int id, const wchar_t* text, HFONT font,
 
 static void log_append(const LogLine& line) {
     if (!g_ui || !g_ui->log) return;
-    wchar_t stamp[32];
+    wchar_t stamp[64];
     SYSTEMTIME st;
     GetLocalTime(&st);
-    swprintf(stamp, 32, L"%02d:%02d:%02d  ", st.wHour, st.wMinute, st.wSecond);
+    // `12:04:31 [ok   ] text` - the level tag mirrors the file log, so the
+    // scrollback stays readable after a long run scrolls past.
+    swprintf(stamp, 64, L"%02d:%02d:%02d [%-6s] ", st.wHour, st.wMinute, st.wSecond,
+             wide(line.level).c_str());
     std::wstring text = stamp + wide(line.text) + L"\r\n";
     int len = GetWindowTextLengthW(g_ui->log);
     if (g_ui->follow_log) {
@@ -152,16 +168,23 @@ static void set_status(const std::string& s) {
     }
 }
 
-static void set_running(bool on) {
+static void set_running(bool on, const char* kind = nullptr) {
     g_running = on;
     if (!g_ui) return;
+    if (on && kind) g_ui->run_kind = kind;
+    if (!on) g_ui->run_kind.clear();
+    g_ui->run_state = on ? "running" : "idle";
     EnableWindow(g_ui->btn_goal, !on);
     EnableWindow(g_ui->btn_script, !on);
     EnableWindow(g_ui->quick1, !on);
     EnableWindow(g_ui->quick2, !on);
     EnableWindow(g_ui->quick3, !on);
     EnableWindow(g_ui->btn_stop, on);
-    set_status(on ? "running - press STOP or hold ESC to abort" : "idle");
+    set_status(on ? (g_ui->run_kind == "goal"
+                         ? "planning from the screen - STOP or hold ESC to abort"
+                         : "running the script - STOP or hold ESC to abort")
+                  : "idle");
+    if (g_ui->hwnd) InvalidateRect(g_ui->hwnd, nullptr, FALSE);
 }
 
 // ---------------------------------------------------------- worker thread ---
@@ -182,7 +205,7 @@ static void start_job(const std::string& kind, const std::string& payload) {
     cfg.auto_run = g_ui->auto_run;
 
     request_abort(false);
-    set_running(true);
+    set_running(true, kind.c_str());
     g_worker = std::thread([kind, payload, cfg]() {
         Agent agent(cfg);
         agent.on_log = [](const LogLine& l) {
@@ -275,13 +298,38 @@ static void paint(HWND hwnd) {
                        wide(g_ui->status_text);
     TextOutW(mem, 20, 38, sub.c_str(), (int)sub.size());
 
+    // Run-state pill, right-aligned in the header: the one thing that should
+    // be readable across the room. Dry-run gets a pill of its own so nobody
+    // mistakes a rehearsal for a real run.
+    const wchar_t* state_txt = L"IDLE";
+    COLORREF state_col = C_OFF;
+    if (g_ui->run_state == "running") {
+        state_txt = g_ui->run_kind == "goal" ? L"AGENT RUNNING" : L"RUNNING";
+        state_col = C_OK;
+    } else if (g_ui->run_state == "stopping") {
+        state_txt = L"STOPPING";
+        state_col = C_WARN;
+    }
+    const int pill_w = 176, pill_h = 30, pill_y = 16;
+    int pill_x = rc.right - 20 - pill_w;
+    if (g_ui->dry_run) {
+        RECT dry{pill_x - 124, pill_y, pill_x - 12, pill_y + pill_h};
+        draw_round(mem, dry, 15, RGB(54, 38, 10), C_WARN, true);
+        SetTextColor(mem, C_WARN);
+        SelectObject(mem, g_ui->f_bold);
+        DrawTextW(mem, L"DRY RUN", -1, &dry, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    RECT pill{pill_x, pill_y, pill_x + pill_w, pill_y + pill_h};
+    draw_round(mem, pill, 15, RGB(20, 20, 24), state_col, true);
+    SetTextColor(mem, state_col);
+    SelectObject(mem, g_ui->f_bold);
+    DrawTextW(mem, state_txt, -1, &pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
     // left: the live screen
     Rect pr = g_ui->preview_rect;
     if (!g_ui->preview.empty() && pr.w > 10) {
-        HBRUSH frame = CreateSolidBrush(RGB(12, 12, 14));
-        RECT fr{pr.x - 2, pr.y - 2, pr.x + pr.w + 2, pr.y + pr.h + 2};
-        FillRect(mem, &fr, frame);
-        DeleteObject(frame);
+        draw_round(mem, RECT{pr.x - 3, pr.y - 3, pr.x + pr.w + 3, pr.y + pr.h + 3}, 6,
+                   RGB(12, 12, 14), C_LINE, true);
 
         BITMAPINFO bmi{};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -330,6 +378,15 @@ static void paint(HWND hwnd) {
         SelectObject(mem, op);
         DeleteObject(cpen);
 
+        // "LIVE" chip in the corner of the preview, so it is obvious this is
+        // the real screen and not a picture of one
+        RECT chip{pr.x + 8, pr.y + 8, pr.x + 86, pr.y + 32};
+        draw_round(mem, chip, 12, RGB(12, 14, 16), C_OK, true);
+        SelectObject(mem, g_ui->f_bold);
+        SetTextColor(mem, C_OK);
+        DrawTextW(mem, L"\x25CF LIVE", -1, &chip, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(mem, g_ui->f_ui);
+
         // caption under the preview
         SelectObject(mem, g_ui->f_ui);
         SetTextColor(mem, C_MUTED);
@@ -356,10 +413,23 @@ static void paint(HWND hwnd) {
     SetTextColor(mem, C_TEXT);
     TextOutW(mem, panel_x, HEADER_TOP() + 20, L"Agent", 5);
     SelectObject(mem, g_ui->f_ui);
-    SetTextColor(mem, g_cfg.api_key.empty() ? RGB(255, 190, 70) : RGB(70, 200, 120));
+    SetTextColor(mem, g_cfg.api_key.empty() ? C_WARN : C_OK);
     const wchar_t* key_state = g_cfg.api_key.empty() ? L"no model key - script mode only"
                                                     : L"model key set";
     TextOutW(mem, panel_x + 60, HEADER_TOP() + 21, key_state, (int)wcslen(key_state));
+    if (!g_cfg.api_key.empty()) {
+        // what it can see with, so the settings are one glance away
+        std::wstring model = L"";
+        for (wchar_t c : wide(g_cfg.model)) {
+            model.push_back(c);
+            if (model.size() >= 34) {
+                model += L"...";
+                break;
+            }
+        }
+        SetTextColor(mem, C_MUTED);
+        TextOutW(mem, panel_x + 60 + 92, HEADER_TOP() + 21, model.c_str(), (int)model.size());
+    }
     if (!g_ui->last_shot.empty()) {
         std::wstring shot = L"last shot: " + wide(g_ui->last_shot);
         SetTextColor(mem, C_MUTED);
@@ -384,35 +454,45 @@ static void layout(HWND hwnd) {
     int x = pr.x + pr.w + 34;
     int w = rc.right - 16 - x;
     if (w < 300) w = 300;
-    int y = HEADER_TOP() + 48;
+    int y = HEADER_TOP() + 42;
 
-    MoveWindow(g_ui->goal, x, y, w, 26, TRUE);
+    // Every section carries a small caption, and everything below it keeps a
+    // consistent rhythm: caption, field, actions.
+    MoveWindow(g_ui->lbl_goal, x, y, w, 15, TRUE);
+    y += 16;
+    MoveWindow(g_ui->goal, x, y, w, 28, TRUE);
     y += 34;
-    MoveWindow(g_ui->btn_goal, x, y, 96, 28, TRUE);
-    MoveWindow(g_ui->btn_capture, x + 102, y, 88, 28, TRUE);
-    MoveWindow(g_ui->btn_stop, x + 196, y, 76, 28, TRUE);
-    MoveWindow(g_ui->btn_settings, x + 278, y, 74, 28, TRUE);
-    y += 36;
-    MoveWindow(g_ui->chk_dry, x, y, 112, 20, TRUE);
-    MoveWindow(g_ui->chk_restore, x + 112, y, 140, 20, TRUE);
-    MoveWindow(g_ui->chk_autorun, x + 256, y, 130, 20, TRUE);
-    y += 26;
-    MoveWindow(g_ui->quick1, x, y, 96, 24, TRUE);
-    MoveWindow(g_ui->quick2, x + 102, y, 96, 24, TRUE);
-    MoveWindow(g_ui->quick3, x + 204, y, 96, 24, TRUE);
-    MoveWindow(g_ui->quick4, x + 306, y, 96, 24, TRUE);
-    y += 32;
+    MoveWindow(g_ui->btn_goal, x, y, 96, 30, TRUE);
+    MoveWindow(g_ui->btn_capture, x + 102, y, 88, 30, TRUE);
+    MoveWindow(g_ui->btn_stop, x + 196, y, 76, 30, TRUE);
+    MoveWindow(g_ui->btn_settings, x + 278, y, 74, 30, TRUE);
+    y += 37;
+    MoveWindow(g_ui->chk_dry, x, y, 116, 20, TRUE);
+    MoveWindow(g_ui->chk_restore, x + 116, y, 142, 20, TRUE);
+    MoveWindow(g_ui->chk_autorun, x + 260, y, 132, 20, TRUE);
+    y += 27;
+    MoveWindow(g_ui->quick1, x, y, 96, 25, TRUE);
+    MoveWindow(g_ui->quick2, x + 102, y, 96, 25, TRUE);
+    MoveWindow(g_ui->quick3, x + 204, y, 96, 25, TRUE);
+    MoveWindow(g_ui->quick4, x + 306, y, 96, 25, TRUE);
+    y += 33;
 
-    int bottom = rc.bottom - 40;
-    int script_h = 108;
-    int log_h = bottom - (y + 22 + script_h + 26);
+    int bottom = rc.bottom - 34;
+    MoveWindow(g_ui->lbl_script, x, y, w, 15, TRUE);
+    y += 16;
+    int script_h = 96;
+    MoveWindow(g_ui->script, x, y, w, script_h, TRUE);
+    int sy = y + script_h + 5;
+    MoveWindow(g_ui->btn_script, x, sy, 92, 26, TRUE);
+    MoveWindow(g_ui->btn_clear, x + 98, sy, 62, 26, TRUE);
+    MoveWindow(g_ui->chk_click, x + 168, sy + 3, 176, 20, TRUE);
+    MoveWindow(g_ui->btn_folder, x + w - 96, sy, 96, 26, TRUE);
+    int ly = sy + 33;
+    MoveWindow(g_ui->lbl_log, x, ly, w, 15, TRUE);
+    ly += 16;
+    int log_h = bottom - ly;
     if (log_h < 70) log_h = 70;
-    MoveWindow(g_ui->script, x, y + 20, w, script_h, TRUE);
-    MoveWindow(g_ui->btn_script, x, y + 20 + script_h + 4, 92, 24, TRUE);
-    MoveWindow(g_ui->btn_clear, x + 98, y + 20 + script_h + 4, 62, 24, TRUE);
-    MoveWindow(g_ui->chk_click, x + 168, y + 20 + script_h + 4, 150, 20, TRUE);
-    MoveWindow(g_ui->btn_folder, x + w - 96, y + 20 + script_h + 4, 96, 24, TRUE);
-    MoveWindow(g_ui->log, x, y + 22 + script_h + 32, w, log_h, TRUE);
+    MoveWindow(g_ui->log, x, ly, w, log_h, TRUE);
 }
 
 // Publish the window and control geometry in screen pixels. This is what lets
@@ -474,7 +554,14 @@ static void draw_button(LPDRAWITEMSTRUCT di) {
     if (disabled) fill = RGB(42, 42, 48);
 
     RECT r = di->rcItem;
-    draw_round(di->hDC, r, 8, fill, C_LINE, !is_goal && !is_stop);
+    // The accent and STOP fills never change hue on hover (that would make the
+    // button look like a different button); they gain a bright edge instead.
+    if (is_goal)
+        draw_round(di->hDC, r, 8, fill, RGB(170, 210, 255), hot && !disabled);
+    else if (is_stop)
+        draw_round(di->hDC, r, 8, fill, RGB(255, 190, 185), hot && !disabled);
+    else
+        draw_round(di->hDC, r, 8, fill, C_LINE, true);
 
     wchar_t text[64] = {0};
     GetWindowTextW(di->hwndItem, text, 63);
@@ -566,9 +653,12 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TextOutW(dc, 20, 18, L"Model settings", 14);
             SelectObject(dc, g_ui->f_ui);
             SetTextColor(dc, C_MUTED);
-            TextOutW(dc, 20, 40, L"API key (NVIDIA, OpenAI, OpenRouter, local - stored in hawk.ini)", 69);
-            TextOutW(dc, 20, 108, L"Base URL (OpenAI-compatible, .../v1)", 36);
-            TextOutW(dc, 20, 174, L"Model id (use a vision model to let it see the screen)", 55);
+            const wchar_t* l1 = L"API key (NVIDIA, OpenAI, OpenRouter, local - stored in hawk.ini)";
+            const wchar_t* l2 = L"Base URL (OpenAI-compatible, .../v1)";
+            const wchar_t* l3 = L"Model id - must be able to SEE screenshots (default is NVIDIA's vision model)";
+            TextOutW(dc, 20, 40, l1, (int)wcslen(l1));
+            TextOutW(dc, 20, 108, l2, (int)wcslen(l2));
+            TextOutW(dc, 20, 174, l3, (int)wcslen(l3));
             SelectObject(dc, old);
             EndPaint(hwnd, &ps);
             return 0;
@@ -644,6 +734,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_ui->f_mono = CreateFontW(-14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                                        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                        DEFAULT_PITCH, L"Consolas");
+            g_ui->f_label = CreateFontW(-13, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+                                        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                        DEFAULT_PITCH, L"Segoe UI");
             g_ui->b_bg = CreateSolidBrush(C_BG);
             g_ui->b_panel = CreateSolidBrush(C_PANEL);
             g_ui->b_field = CreateSolidBrush(C_FIELD);
@@ -651,13 +744,25 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             g_ui->goal = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                          0, 0, 10, 10, hwnd, (HMENU)ID_GOAL, nullptr, nullptr);
+            // ES_DISABLENOSCROLL keeps the text column from jumping sideways
+            // when a run makes the log or script grow past the window.
             g_ui->script = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                                            WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL |
-                                               WS_VSCROLL | ES_WANTRETURN,
+                                               WS_VSCROLL | ES_WANTRETURN | ES_DISABLENOSCROLL,
                                            0, 0, 10, 10, hwnd, (HMENU)ID_SCRIPT, nullptr, nullptr);
             g_ui->log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                                        WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
+                                        WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY |
+                                            WS_VSCROLL | ES_DISABLENOSCROLL,
                                         0, 0, 10, 10, hwnd, (HMENU)ID_LOG, nullptr, nullptr);
+            g_ui->lbl_goal = CreateWindowExW(0, L"STATIC", L"GOAL - tell the agent what to achieve",
+                                             WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, 10, hwnd,
+                                             (HMENU)ID_LBL_GOAL, nullptr, nullptr);
+            g_ui->lbl_script = CreateWindowExW(0, L"STATIC", L"SCRIPT - commands run on the real machine",
+                                               WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, 10, hwnd,
+                                               (HMENU)ID_LBL_SCRIPT, nullptr, nullptr);
+            g_ui->lbl_log = CreateWindowExW(0, L"STATIC", L"ACTIVITY",
+                                            WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, 10, hwnd,
+                                            (HMENU)ID_LBL_LOG, nullptr, nullptr);
             g_ui->btn_goal = make_button(hwnd, ID_BTN_GOAL, L"Run goal", g_ui->f_ui,
                                          L"Hand the goal and a screenshot to the model, then act");
             g_ui->btn_script = make_button(hwnd, ID_BTN_SCRIPT, L"Run script", g_ui->f_ui,
@@ -697,6 +802,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             for (HWND h : {g_ui->goal, g_ui->chk_dry, g_ui->chk_restore, g_ui->chk_click,
                            g_ui->chk_autorun})
                 set_font(h, g_ui->f_ui);
+            for (HWND h : {g_ui->lbl_goal, g_ui->lbl_script, g_ui->lbl_log})
+                set_font(h, g_ui->f_label);
             set_font(g_ui->script, g_ui->f_mono);
             set_font(g_ui->log, g_ui->f_mono);
 
@@ -708,6 +815,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             log_append(LogLine{"info", std::string(HAWK_NAME) + " " + HAWK_VERSION + " ready"});
             log_append(LogLine{"info", "Left: live screen. Right: the Agent. Try a quick action, or "
                                        "type a goal and press Run goal."});
+            log_append(LogLine{"info", "Scripts can see too: `look` reads the screen and lists the "
+                                       "controls it detects; `clickel 1` clicks the top one."});
             log_append(LogLine{"info", "Safety: hold ESC or press Ctrl+Alt+H to abort a run."});
             return 0;
         }
@@ -748,13 +857,22 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_HOTKEY:
             if (wp == ID_HOTKEY_STOP) {
                 request_abort(true);
+                g_ui->run_state = "stopping";
                 log_append(LogLine{"warn", "STOP hotkey (Ctrl+Alt+H) pressed"});
                 set_status("stopping...");
+                InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         case WM_CTLCOLOREDIT: {
             HDC dc = (HDC)wp;
             HWND ctl = (HWND)lp;
+            if (ctl == g_ui->log) {
+                // The log is a running record: kept calm and muted so the
+                // newest entry, not the loudest colour, is what you read.
+                SetTextColor(dc, C_MUTED);
+                SetBkColor(dc, RGB(15, 15, 18));
+                return (LRESULT)g_ui->b_log;
+            }
             SetTextColor(dc, C_TEXT);
             if (ctl == g_ui->script) {
                 SetBkColor(dc, C_FIELD);
@@ -765,7 +883,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CTLCOLORSTATIC: {
             HDC dc = (HDC)wp;
-            SetTextColor(dc, C_TEXT);
+            HWND ctl = (HWND)lp;
+            bool is_label = ctl == g_ui->lbl_goal || ctl == g_ui->lbl_script ||
+                            ctl == g_ui->lbl_log;
+            SetTextColor(dc, is_label ? C_MUTED : C_TEXT);
             SetBkMode(dc, TRANSPARENT);
             return (LRESULT)g_ui->b_panel;
         }
@@ -817,8 +938,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case ID_BTN_SCRIPT: run_script_now(); return 0;
                 case ID_BTN_STOP:
                     request_abort(true);
+                    g_ui->run_state = "stopping";
                     log_append(LogLine{"warn", "STOP pressed"});
                     set_status("stopping...");
+                    if (g_ui->hwnd) InvalidateRect(g_ui->hwnd, nullptr, FALSE);
                     return 0;
                 case ID_BTN_CAPTURE: {
                     std::string path = take_shot("app");
@@ -839,12 +962,19 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case ID_BTN_CLEAR: SetWindowTextW(g_ui->log, L""); return 0;
                 case ID_CHK_DRYRUN:
                     g_ui->dry_run = SendMessageW(g_ui->chk_dry, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    // the caption itself carries the state - no reading a tiny
+                    // checkbox to know whether this run is real
+                    SetWindowTextW(g_ui->chk_dry, g_ui->dry_run ? L"Dry run: ON" : L"Dry run");
                     log_append(LogLine{"info", g_ui->dry_run ? "dry run on: nothing will be touched"
                                                              : "dry run off: actions are real"});
+                    InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 case ID_CHK_CLICKTHRU:
                     g_ui->click_through =
                         SendMessageW(g_ui->chk_click, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    SetWindowTextW(g_ui->chk_click, g_ui->click_through ? L"Click-through: ON"
+                                                                       : L"Click-through");
+                    InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 case ID_CHK_AUTORUN:
                     g_ui->auto_run =
@@ -912,28 +1042,43 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     const wchar_t* help =
                         L"# Hawk OS commands - every one of these acts on the real machine\n"
                         L"#\n"
-                        L"# shot [name.png]                      capture the whole screen\n"
+                        L"# --- seeing ---------------------------------------------------------\n"
+                        L"# shot [name.png]                       capture the whole screen\n"
                         L"# shotwin <title> [name.png]            capture one window\n"
                         L"# region x y w h                        part of the screen\n"
-                        L"# move x y | move rel dx dy              move the real cursor\n"
-                        L"# click [left|right|double] [x y]        real mouse click\n"
-                        L"# drag x1 y1 x2 y2                       press, drag, release\n"
-                        L"# scroll <notches>                       wheel (negative = down)\n"
-                        L"# type <text>                           real keystrokes, \\n = Enter\n"
-                        L"# key ctrl+s | key alt+f4 | key enter    key combinations\n"
-                        L"# focus <title part>                    raise a window\n"
-                        L"# open notepad | open https://...        launch something\n"
-                        L"# close <title part>                    ask a window to close\n"
-                        L"# wait <ms>                             pause\n"
-                        L"# waitclose <title part> [ms]           wait until a window is gone\n"
+                        L"# look                                 analyse the screen: list the\n"
+                        L"#                                      controls it can detect\n"
+                        L"# elements [x y w h]                    same, with clickable coordinates\n"
                         L"# pixel x y                             colour at a point\n"
-                        L"# find RRGGBB [tol] [move|click|double] find a colour, act on it\n"
+                        L"# windows | monitors | cursor           describe the machine\n"
+                        L"# --- touching -------------------------------------------------------\n"
+                        L"# move x y | move rel dx dy             move the real cursor\n"
+                        L"# click [left|right|double] [x y]       real mouse click\n"
+                        L"# clickel <rank> [right|double]         click the Nth detected control\n"
+                        L"# drag x1 y1 x2 y2                      press, drag, release\n"
+                        L"# scroll <notches>                      wheel (negative = down)\n"
+                        L"# smove x y | sclick [btn] x y | sdrag ..  aim at the last screenshot;\n"
+                        L"#                                      Hawk maps it onto the real screen\n"
+                        L"# type <text>                           real keystrokes,  \\n = Enter\n"
+                        L"# key ctrl+s | key alt+f4 | key enter   key combinations\n"
+                        L"# --- windows --------------------------------------------------------\n"
+                        L"# focus <title part>                    raise a window\n"
+                        L"# waitfocus <title part> [ms]           wait for a window, then focus it\n"
+                        L"# open notepad | open https://...       launch something\n"
+                        L"# close <title part>                    ask a window to close\n"
+                        L"# waitclose <title part> [ms]           wait until a window is gone\n"
+                        L"# wait <ms>                             pause\n"
+                        L"# --- finding and verifying ------------------------------------------\n"
+                        L"# find RRGGBB [tol] [move|click|double]  find a colour, act on it\n"
+                        L"# findarea RRGGBB [tol] [move|click|double]  same, on whole regions\n"
                         L"# verifypixel x y RRGGBB [tol]          assert what is on screen\n"
-                        L"# windows | monitors | cursor            describe the machine\n"
+                        L"# --- files and flow -------------------------------------------------\n"
                         L"# write <path> <text> | mkdir <path>    create files/folders\n"
                         L"# ensure <path> [text]                  create a file only if missing\n"
+                        L"# read <path>                           print a file into the log\n"
                         L"# del <path>                            delete a file (~ = your folder)\n"
                         L"# try <cmd>                             ignore a failure\n"
+                        L"# log <text> | done                     note; finish\n"
                         L"#\n"
                         L"# Delete these comment lines and write your own commands here.\n";
                     SetWindowTextW(g_ui->script, help);
@@ -941,6 +1086,17 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             break;
+        }
+        case WM_GETMINMAXINFO: {
+            // Keep the window big enough that the Agent panel never collapses,
+            // and never larger than the desktop it lives on.
+            auto* mmi = (MINMAXINFO*)lp;
+            Rect v = virtual_desktop();
+            mmi->ptMinTrackSize.x = v.w > 940 ? 880 : v.w - 40;
+            mmi->ptMinTrackSize.y = v.h > 640 ? 580 : v.h - 60;
+            if (mmi->ptMinTrackSize.x < 640) mmi->ptMinTrackSize.x = 640;
+            if (mmi->ptMinTrackSize.y < 440) mmi->ptMinTrackSize.y = 440;
+            return 0;
         }
         case WM_CLOSE: {
             request_abort(true);
@@ -951,6 +1107,17 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             KillTimer(hwnd, 1);
             UnregisterHotKey(hwnd, ID_HOTKEY_STOP);
+            for (HFONT* f : {&g_ui->f_ui, &g_ui->f_bold, &g_ui->f_title, &g_ui->f_mono,
+                             &g_ui->f_label})
+                if (*f) {
+                    DeleteObject(*f);
+                    *f = nullptr;
+                }
+            for (HBRUSH* b : {&g_ui->b_bg, &g_ui->b_panel, &g_ui->b_field, &g_ui->b_log})
+                if (*b) {
+                    DeleteObject(*b);
+                    *b = nullptr;
+                }
             PostQuitMessage(0);
             return 0;
     }

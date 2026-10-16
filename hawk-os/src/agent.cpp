@@ -149,6 +149,101 @@ void Agent::publish_script(const std::string& script) {
     }
 }
 
+// ---------------------------------------------------- screenshot grounding --
+// The screenshot the model works from has its own pixel space. These helpers
+// keep track of how that space maps onto the real desktop, so a script can say
+// "click 320,480" (a point read off the image) and touch the real screen there.
+void Agent::remember_map(const Image& shot, const Rect& desk) {
+    map_.w = shot.w;
+    map_.h = shot.h;
+    map_.desk = desk;
+    map_.valid = !shot.empty() && shot.w > 0 && shot.h > 0;
+}
+
+bool Agent::to_desktop(int sx, int sy, Point* out) const {
+    if (!map_.valid || map_.w <= 0 || map_.h <= 0) return false;
+    Point p;
+    p.x = map_.desk.x + (int)((long)sx * map_.desk.w / map_.w);
+    p.y = map_.desk.y + (int)((long)sy * map_.desk.h / map_.h);
+    if (out) *out = p;
+    return true;
+}
+
+// Model-free reading of a screenshot: what colours dominate, which controls
+// were detected, and where each one sits in both screenshot and desktop space.
+static std::string element_lines(const std::vector<UiElement>& els, const Rect& desk,
+                                 int shot_w, int shot_h) {
+    std::string out;
+    if (shot_w <= 0) shot_w = 1;
+    if (shot_h <= 0) shot_h = 1;
+    for (size_t i = 0; i < els.size(); i++) {
+        const UiElement& e = els[i];
+        int cx = e.rect.x + e.rect.w / 2, cy = e.rect.y + e.rect.h / 2;
+        int dx = desk.x + (int)((long)cx * desk.w / shot_w);
+        int dy = desk.y + (int)((long)cy * desk.h / shot_h);
+        char line[320];
+        snprintf(line, sizeof(line),
+                 "  %2d. %-6s at %4d,%-4d size %3dx%-3d fill #%s   centre screenshot %d,%d -> "
+                 "desktop %d,%d\n",
+                 (int)i + 1, e.kind, e.rect.x, e.rect.y, e.rect.w, e.rect.h,
+                 color_hex(e.color).c_str(), cx, cy, dx, dy);
+        out += line;
+    }
+    return out;
+}
+
+std::string Agent::visual_report(const Image& img) {
+    if (img.empty()) return "Visual analysis: no pixels to analyse.\n";
+    Rect v = map_.valid ? map_.desk : virtual_desktop();
+    std::string s = "Visual analysis computed by Hawk from the screenshot itself:\n";
+
+    std::vector<std::pair<uint32_t, int>> dom = dominant_colors(img, 6);
+    if (!dom.empty()) {
+        int sampled = (img.w / 2 + 1) * (img.h / 2 + 1);
+        s += "  dominant colours: ";
+        for (size_t i = 0; i < dom.size(); i++) {
+            char buf[64];
+            int pct = sampled > 0 ? dom[i].second * 100 / sampled : 0;
+            if (pct > 100) pct = 100;
+            snprintf(buf, sizeof(buf), "#%s %d%%%s", color_hex(dom[i].first).c_str(), pct,
+                     i + 1 < dom.size() ? ", " : "\n");
+            s += buf;
+        }
+    }
+
+    std::vector<UiElement> els = detect_elements(img, 10);
+    if (els.empty()) {
+        s += "  controls detected: none - the screen looks plain or photographic\n";
+    } else {
+        s += "  controls detected (ranked; coordinates are in this screenshot's pixel space):\n";
+        s += element_lines(els, v, img.w, img.h);
+    }
+    return s;
+}
+
+bool Agent::look() {
+    Image img = capture_screen();
+    if (img.empty()) {
+        log("fail", "look: could not capture the screen");
+        return false;
+    }
+    Rect v = virtual_desktop();
+    remember_map(img, v);  // full-resolution capture: screenshot px == desktop px
+    // Dry-run promises not to write anything, so it analyses without saving.
+    last_shot_ = config.dry_run ? "" : take_shot("look");
+    std::vector<UiElement> els = detect_elements(img, 12);
+    log("ok", "look: " + std::to_string(img.w) + "x" + std::to_string(img.h) + ", " +
+                  std::to_string(els.size()) + " control(s) detected" +
+                  (last_shot_.empty() ? "" : (", screenshot " + last_shot_)));
+    log("info", visual_report(img));
+    if (!els.empty())
+        log("info", "click the top control with: click " +
+                        std::to_string(els[0].rect.x + els[0].rect.w / 2) + " " +
+                        std::to_string(els[0].rect.y + els[0].rect.h / 2) +
+                        "   (or use clickel 1)");
+    return true;
+}
+
 // ------------------------------------------------------------------- script --
 bool Agent::run_script(const std::string& script) {
     Point cursor_before = cursor_pos();
@@ -241,6 +336,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("fail", "capture returned no pixels");
             return false;
         }
+        remember_map(img, virtual_desktop());  // so sclick/smove can use its coordinates
         std::string path = a.size() > 1 && !a[1].empty()
                                ? (is_absolute(a[1]) ? a[1] : shot_dir() + "\\" + a[1])
                                : take_shot("screen");
@@ -294,6 +390,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("fail", "region: nothing to capture");
             return false;
         }
+        remember_map(img, r);  // the region's own pixel space, mapped onto itself
         std::string path = take_shot("region");
         if (!save_png(img, path)) {
             log("fail", "could not write " + path);
@@ -405,6 +502,93 @@ bool Agent::step(const std::string& raw_line, int depth) {
             return false;
         }
         log("ok", "scrolled " + std::to_string(n) + " notch(es)");
+        return true;
+    }
+    // Screenshot-space aiming: coordinates are read straight off the image the
+    // agent (or the model) was looking at, and Hawk maps them onto the real
+    // screen itself - no arithmetic to get wrong.
+    if (cmd == "smove" || cmd == "sclick" || cmd == "sdrag") {
+        if (!map_.valid) {
+            log("fail", cmd + ": no screenshot to aim from yet - run `look`, `shot` or a goal "
+                            "first");
+            return false;
+        }
+        if (cmd == "smove") {
+            if (!need(2)) return false;
+            Point p{};
+            if (!to_desktop(number(1, 0), number(2, 0), &p)) {
+                log("fail", "smove: the screenshot mapping is not usable");
+                return false;
+            }
+            if (config.dry_run) {
+                log("action", "smove " + std::to_string(p.x) + "," + std::to_string(p.y) +
+                                  " (dry-run)");
+                return true;
+            }
+            if (!move_cursor(p.x, p.y, &err)) {
+                log("fail", "smove: " + err);
+                return false;
+            }
+            log("ok", "screenshot " + a[1] + "," + a[2] + " -> screen " + std::to_string(p.x) +
+                          "," + std::to_string(p.y));
+            return true;
+        }
+        if (cmd == "sclick") {
+            std::string button = "left";
+            int times = 1;
+            size_t i = 1;
+            if (i < a.size()) {
+                std::string t = to_lower(a[i]);
+                if (t == "double") {
+                    times = 2;
+                    i++;
+                } else if (t == "left" || t == "right" || t == "middle") {
+                    button = t;
+                    i++;
+                }
+            }
+            if (!need(i + 1)) return false;
+            Point p{};
+            if (!to_desktop(number(i, 0), number(i + 1, 0), &p)) {
+                log("fail", "sclick: the screenshot mapping is not usable");
+                return false;
+            }
+            if (config.dry_run) {
+                log("action", "sclick " + std::to_string(p.x) + "," + std::to_string(p.y) +
+                                  " (dry-run)");
+                return true;
+            }
+            if (!move_cursor(p.x, p.y, &err)) {
+                log("fail", "sclick: " + err);
+                return false;
+            }
+            if (!click_mouse(button, times, &err)) {
+                log("fail", "sclick: " + err);
+                return false;
+            }
+            Point landed = cursor_pos();
+            log("ok", "screenshot " + a[i] + "," + a[i + 1] + " -> " + button +
+                          (times > 1 ? " x" + std::to_string(times) : "") + " click at " +
+                          std::to_string(landed.x) + "," + std::to_string(landed.y));
+            return true;
+        }
+        if (!need(4)) return false;
+        Point p1{}, p2{};
+        if (!to_desktop(number(1, 0), number(2, 0), &p1) ||
+            !to_desktop(number(3, 0), number(4, 0), &p2)) {
+            log("fail", "sdrag: the screenshot mapping is not usable");
+            return false;
+        }
+        if (config.dry_run) {
+            log("action", "sdrag " + std::to_string(p1.x) + "," + std::to_string(p1.y) + " -> " +
+                              std::to_string(p2.x) + "," + std::to_string(p2.y) + " (dry-run)");
+            return true;
+        }
+        if (!drag_mouse(p1.x, p1.y, p2.x, p2.y, "left", &err)) {
+            log("fail", "sdrag: " + err);
+            return false;
+        }
+        log("ok", "dragged screenshot " + a[1] + "," + a[2] + " -> " + a[3] + "," + a[4]);
         return true;
     }
     if (cmd == "type") {
@@ -523,6 +707,33 @@ bool Agent::step(const std::string& raw_line, int depth) {
                         std::to_string(timeout) + " ms");
         return false;
     }
+    if (cmd == "waitfocus") {
+        // Wait for a window to appear (or stop being minimized), then bring it
+        // to the front. This is what makes multi-application flows reliable:
+        // `open code` + `waitfocus Visual Studio Code` cannot race the app's
+        // own startup the way `open` + `focus` can.
+        if (!need(1)) return false;
+        std::string needle = a[1];
+        int timeout = a.size() > 2 ? number(2, 20000) : 20000;
+        if (config.dry_run) {
+            log("action", "waitfocus " + needle + " (dry-run)");
+            return true;
+        }
+        int waited = 0;
+        while (waited < timeout) {
+            HWND h = find_window(needle);
+            if (h && !IsIconic(h) && focus_window(h)) {
+                log("ok", "window '" + narrow(window_title(h)) + "' is up and focused (after " +
+                              std::to_string(waited) + " ms)");
+                return true;
+            }
+            sleep_ms(200);
+            waited += 200;
+        }
+        log("fail", "waitfocus: no window matching '" + needle + "' became focusable within " +
+                        std::to_string(timeout) + " ms");
+        return false;
+    }
 
     // ---- inspecting ----
     if (cmd == "pixel") {
@@ -574,6 +785,119 @@ bool Agent::step(const std::string& raw_line, int depth) {
                     return false;
                 }
                 log("ok", action + " at the found colour");
+            }
+        }
+        return true;
+    }
+    if (cmd == "look") {
+        return look();
+    }
+    if (cmd == "elements") {
+        // Detect the controls on the current screen (optionally inside a
+        // region) and report them with the coordinates a script can click.
+        Rect v = virtual_desktop();
+        Rect area = v;
+        bool limited = a.size() >= 5;
+        if (limited) area = Rect{number(1, 0), number(2, 0), number(3, 100), number(4, 100)};
+        Image img = limited ? capture_region(area) : capture_screen();
+        if (img.empty()) {
+            log("fail", "elements: could not capture the screen");
+            return false;
+        }
+        remember_map(img, limited ? area : v);
+        std::vector<UiElement> els = detect_elements(img, 14);
+        last_shot_ = config.dry_run ? "" : take_shot("elements");
+        log("ok", "elements: " + std::to_string(els.size()) + " control(s) on screen");
+        if (els.empty()) {
+            log("info", "nothing control-like was detected (plain or photographic screen)");
+        } else {
+            log("info", "coordinates below are in the captured image; clickel 1 clicks the "
+                        "top-ranked one:\n" + element_lines(els, limited ? area : v, img.w, img.h));
+        }
+        return true;
+    }
+    if (cmd == "clickel") {
+        // "clickel 2" - detect the controls again and click the 2nd-ranked one.
+        int rank = need(1) ? number(1, 1) : 1;
+        if (rank < 1) rank = 1;
+        std::string button = a.size() > 2 ? to_lower(a[2]) : (a.size() > 1 && to_lower(a[1]) != std::to_string(rank) ? to_lower(a[1]) : "left");
+        int times = button == "double" ? 2 : 1;
+        if (button != "right" && button != "middle" && button != "double") button = "left";
+        Image img = capture_screen();
+        if (img.empty()) {
+            log("fail", "clickel: could not capture the screen");
+            return false;
+        }
+        std::vector<UiElement> els = detect_elements(img, 14);
+        if ((int)els.size() < rank) {
+            log("fail", "clickel: only " + std::to_string(els.size()) +
+                            " control(s) detected, no rank " + std::to_string(rank));
+            return false;
+        }
+        const UiElement& e = els[rank - 1];
+        Rect v = virtual_desktop();
+        int x = v.x + e.rect.x + e.rect.w / 2, y = v.y + e.rect.y + e.rect.h / 2;
+        log("ok", "clickel: rank " + std::to_string(rank) + " is a " + e.kind + " filling #" +
+                      color_hex(e.color) + " at " + std::to_string(e.rect.x) + "," +
+                      std::to_string(e.rect.y) + " " + std::to_string(e.rect.w) + "x" +
+                      std::to_string(e.rect.h));
+        if (config.dry_run) {
+            log("action", "click " + std::to_string(x) + "," + std::to_string(y) + " (dry-run)");
+            return true;
+        }
+        if (!move_cursor(x, y, &err)) {
+            log("fail", "clickel: " + err);
+            return false;
+        }
+        if (!click_mouse(button == "double" ? "left" : button, times, &err)) {
+            log("fail", "clickel: " + err);
+            return false;
+        }
+        Point p = cursor_pos();
+        log("ok", "clicked control rank " + std::to_string(rank) + " at " + std::to_string(p.x) +
+                      "," + std::to_string(p.y));
+        return true;
+    }
+    if (cmd == "findarea") {
+        // "findarea" works on whole regions instead of single pixels: it looks
+        // for the biggest blob of a colour, which is what a button actually is.
+        if (!need(1)) return false;
+        uint32_t want = parse_color(a[1]);
+        if (want == 0xFFFFFFFFu) {
+            log("fail", "findarea: '" + a[1] + "' is not an RRGGBB colour");
+            return false;
+        }
+        int tol = a.size() > 2 ? number(2, 60) : 60;
+        std::string action = a.size() > 3 ? to_lower(a[3]) : "";
+        Image img = capture_screen();
+        Rect area;
+        if (!find_color_area(img, want, tol, &area)) {
+            log("fail", "findarea: no blob of #" + to_lower(a[1]) + " (tolerance " +
+                            std::to_string(tol) + ") is on screen");
+            return false;
+        }
+        Rect v = virtual_desktop();
+        Point centre{v.x + area.x + area.w / 2, v.y + area.y + area.h / 2};
+        log("ok", "findarea: #" + to_lower(a[1]) + " covers screen " + std::to_string(v.x + area.x) +
+                      "," + std::to_string(v.y + area.y) + " " + std::to_string(area.w) + "x" +
+                      std::to_string(area.h) + ", centre " + std::to_string(centre.x) + "," +
+                      std::to_string(centre.y));
+        if (action == "move" || action == "click" || action == "double") {
+            if (config.dry_run) {
+                log("action", action + " the found region (dry-run)");
+                return true;
+            }
+            if (!move_cursor(centre.x, centre.y, &err)) {
+                log("fail", "findarea: " + err);
+                return false;
+            }
+            if (action != "move") {
+                int times = action == "double" ? 2 : 1;
+                if (!click_mouse("left", times, &err)) {
+                    log("fail", "findarea: " + err);
+                    return false;
+                }
+                log("ok", action + " at the centre of the found region");
             }
         }
         return true;
@@ -737,8 +1061,10 @@ bool Agent::step(const std::string& raw_line, int depth) {
         cmd.find_first_of(" \t") == std::string::npos)
         log("info", "that looks like plain words, not a command - press Run goal to hand a "
                     "sentence to the agent, or Run script for commands");
-    log("info", "commands: shot shotwin region move click drag scroll type key focus open close "
-                "wait pixel find verifypixel windows cursor monitors write read mkdir log try done");
+    log("info", "commands: shot shotwin region look elements clickel move click drag scroll "
+                "type key focus open close wait waitclose waitfocus pixel find findarea "
+                "verifypixel smove sclick sdrag windows cursor monitors write read mkdir log "
+                "try done");
     return false;
 }
 
@@ -841,7 +1167,7 @@ static ParsedUrl parse_url(const std::string& url) {
 }
 
 bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
-                     std::string* reply, std::string* err) {
+                     std::string* reply, std::string* err, int max_tokens) {
     ParsedUrl url = parse_url(config.base_url);
     if (!url.ok) {
         *err = "base URL looks wrong: " + config.base_url;
@@ -860,9 +1186,11 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
     } else {
         content = "\"" + json_escape(prompt) + "\"";
     }
+    if (max_tokens < 100) max_tokens = 100;
     std::string body = "{\"model\":\"" + json_escape(config.model) + "\",\"messages\":[{\"role\":\"" +
                        std::string("user") + "\",\"content\":" + content +
-                       "}],\"temperature\":0.2,\"max_tokens\":700,\"stream\":false}";
+                       "}],\"temperature\":0.2,\"max_tokens\":" + std::to_string(max_tokens) +
+                       ",\"stream\":false}";
 
     HINTERNET session = WinHttpOpen(L"HawkOS/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -982,14 +1310,13 @@ std::vector<std::string> Agent::parse_commands(const std::string& reply) {
         if (w.empty()) continue;
         std::string c = to_lower(w[0]);
         if (c.back() == ':') c.pop_back();
-        static const char* verbs[] = {"shot", "shotwin", "region", "move", "click", "drag",
-                                     "scroll", "type", "key", "focus", "open", "close", "wait",
-                                     "waitclose",
-                                     "sleep", "pixel", "find", "verifypixel", "windows", "cursor",
-                                     "monitors", "write", "read", "mkdir", "ensure", "del", "rm",
-                                     "delete",
-                                     "log", "note", "echo",
-                                     "try", "done"};
+        static const char* verbs[] = {"shot", "shotwin", "region", "look", "elements",
+                                     "clickel", "move", "click", "drag", "scroll", "type", "key",
+                                     "focus", "open", "close", "wait", "waitclose", "waitfocus",
+                                     "sleep", "pixel", "find", "findarea", "verifypixel", "smove",
+                                     "sclick", "sdrag", "windows", "cursor", "monitors", "write",
+                                     "read", "mkdir", "ensure", "del", "rm", "delete", "log", "note",
+                                     "echo", "try", "done"};
         bool known = false;
         for (const char* v : verbs)
             if (c == v) known = true;
@@ -1022,19 +1349,29 @@ static std::string command_reference() {
         "shot [name.png]                  capture the whole screen\n"
         "shotwin <title-part> [name.png]  capture one window\n"
         "region x y w h                   capture part of the screen\n"
+        "look                             read the screen: detect controls, report them\n"
+        "elements [x y w h]               list the controls detected (in a region)\n"
+        "clickel <rank> [right|double]    click the Nth detected control\n"
         "move x y | move rel dx dy        move the real cursor\n"
         "click [left|right|double|triple] [x y]   real click (optionally after moving)\n"
         "drag x1 y1 x2 y2                 press, move, release\n"
         "scroll <notches>                 wheel (negative = down)\n"
+        "smove x y | sclick [btn] x y | sdrag x1 y1 x2 y2\n"
+        "                                 same, but the coordinates are read off the last\n"
+        "                                 screenshot (its own pixel space) - Hawk maps them\n"
+        "                                 onto the real screen for you\n"
         "type <text>                      type text (\\n = Enter), real keystrokes\n"
         "key <combo>                      e.g. key ctrl+s, key alt+f4, key enter\n"
         "focus <title-part>               bring a window to the front\n"
+        "waitfocus <title-part> [ms]      wait until a window exists, then focus it\n"
         "open <path|url|app>              launch it via the shell\n"
         "close <title-part>               ask a window to close\n"
         "waitclose <title-part> [ms]      wait until that window is gone\n"
         "wait <ms>                        pause\n"
         "pixel x y                        report the colour at a point\n"
         "find RRGGBB [tol] [move|click|double]   locate a colour, optionally act on it\n"
+        "findarea RRGGBB [tol] [move|click|double]  same, on whole regions (a button, not\n"
+        "                                 one pixel of it) - acts on the region's centre\n"
         "verifypixel x y RRGGBB [tol]     assert what is on screen\n"
         "windows | monitors | cursor      describe the machine\n"
         "write <path> <text> | mkdir <path>   create files/directories\n"
@@ -1046,6 +1383,72 @@ static std::string command_reference() {
 
 static bool starts_with(const std::string& s, const char* prefix) {
     return s.rfind(prefix, 0) == 0;
+}
+
+// A colour word in everyday speech -> the colour it means on a screen. Used by
+// the no-model planner so "click the blue button" can be grounded in real
+// pixels instead of a blind click at the centre of the display.
+static bool color_word(const std::string& s, uint32_t* bgr) {
+    struct Word {
+        const char* word;
+        uint32_t color;
+    };
+    static const Word words[] = {
+        {"red", 0x00343ED6},        {"green", 0x0058C830},   {"blue", 0x00FF840A},
+        {"yellow", 0x000AD6FF},     {"orange", 0x0A9FFF},    {"purple", 0x00F25ABF},
+        {"violet", 0x00F25ABF},     {"pink", 0x006137FF},    {"cyan", 0x00E6D600},
+        {"magenta", 0x00FF00FF},    {"white", 0x00FFFFFF},   {"black", 0x00000000},
+        {"grey", 0x0093938E},       {"gray", 0x0093938E},
+    };
+    std::string low = to_lower(s);
+    for (const Word& w : words)
+        if (low.find(w.word) != std::string::npos) {
+            if (bgr) *bgr = w.color;
+            return true;
+        }
+    return false;
+}
+
+// "Click the blue button, then the one below it" - the clause has no
+// coordinates, so find the control it is talking about on the real screen.
+static bool click_control_matching(const std::string& phrase, Point* out) {
+    uint32_t want = 0;
+    bool want_color = color_word(phrase, &want);
+    bool wants_button = to_lower(phrase).find("button") != std::string::npos ||
+                        to_lower(phrase).find("control") != std::string::npos ||
+                        to_lower(phrase).find("link") != std::string::npos;
+    if (!want_color && !wants_button) return false;
+    Image img = capture_screen();
+    if (img.empty()) return false;
+    Rect v = virtual_desktop();
+
+    // A colour word is the strongest signal: use the biggest blob of it.
+    if (want_color) {
+        Rect area;
+        if (find_color_area(img, want, 120, &area)) {
+            *out = Point{v.x + area.x + area.w / 2, v.y + area.y + area.h / 2};
+            return true;
+        }
+    }
+    // Otherwise the most control-looking detected element whose colour is near
+    // the named one, or simply the top-ranked control.
+    std::vector<UiElement> els = detect_elements(img, 14);
+    for (const UiElement& e : els) {
+        if (!want_color) break;
+        int d = abs((int)(e.color & 0xFF) - (int)(want & 0xFF)) +
+                abs((int)((e.color >> 8) & 0xFF) - (int)((want >> 8) & 0xFF)) +
+                abs((int)((e.color >> 16) & 0xFF) - (int)((want >> 16) & 0xFF));
+        if (d <= 120) {
+            *out = Point{v.x + e.rect.x + e.rect.w / 2, v.y + e.rect.y + e.rect.h / 2};
+            return true;
+        }
+    }
+    if (wants_button && !els.empty()) {
+        *out = Point{v.x + els[0].rect.x + els[0].rect.w / 2,
+                     v.y + els[0].rect.y + els[0].rect.h / 2};
+        return true;
+    }
+    return false;
 }
 
 static std::string url_encode(const std::string& s) {
@@ -1079,6 +1482,12 @@ std::vector<std::string> Agent::plan_locally(const std::string& goal) {
         {"command prompt", "cmd", "Command Prompt"}, {"terminal", "cmd", "Command Prompt"},
         {"settings", "ms-settings:", nullptr},      {"browser", "https://www.google.com", nullptr},
         {"chrome", "chrome", nullptr},             {"edge", "msedge", nullptr},
+        // "open my python ide / code editor" - the `code` launcher starts VS Code
+        {"visual studio code", "code", "Visual Studio Code"},
+        {"vscode", "code", "Visual Studio Code"},  {"vs code", "code", "Visual Studio Code"},
+        {"python ide", "code", "Visual Studio Code"},
+        {"code editor", "code", "Visual Studio Code"},
+        {"notepad++", "notepad++", "Notepad"},     {"wordpad", "write", nullptr},
     };
 
     // People write "open notepad and type hello then press enter": split on the
@@ -1298,11 +1707,20 @@ std::vector<std::string> Agent::plan_locally(const std::string& goal) {
                 }
             }
             if (!cur.empty()) nums.push_back(cur);
-            if (nums.size() >= 2)
+            if (nums.size() >= 2) {
                 cmds.push_back("click left " + nums[0] + " " + nums[1]);
-            else
-                cmds.push_back("click left " + std::to_string(v.x + v.w / 2) + " " +
-                               std::to_string(v.y + v.h / 2));
+            } else {
+                // No coordinates: see whether the words name a control we can
+                // actually find on the screen ("the blue button").
+                Point hit{};
+                if (click_control_matching(rest.empty() ? clause : rest, &hit)) {
+                    cmds.push_back("click left " + std::to_string(hit.x) + " " +
+                                   std::to_string(hit.y));
+                } else {
+                    cmds.push_back("click left " + std::to_string(v.x + v.w / 2) + " " +
+                                   std::to_string(v.y + v.h / 2));
+                }
+            }
             continue;
         }
         if (begins("scroll ")) {
@@ -1398,39 +1816,46 @@ bool Agent::run_goal(const std::string& goal) {
 
     request_abort(false);
     save_cursor_origin();
-    std::string transcript;
-    std::string generated;
+    std::string transcript;      // what has been executed, ok or FAIL, for the model to see
+    std::string generated;       // the whole script so far, shown in the script box
+    std::vector<std::string> plan;   // the model's script for the whole task
+    size_t plan_at = 0;          // how much of that plan has been executed
+    bool need_plan = true;       // the first vision call writes the full script
+    bool force_check = false;    // a step failed: consult the model before continuing
     bool done = false;
     int total_steps = 0;
+    int round = 0;
+    int shot_w = 0, shot_h = 0;
 
-    for (int round = 0; round < config.max_rounds && !done; round++) {
-        if (total_steps >= config.max_steps) {
-            log("warn", "goal reached the maximum action count");
-            break;
-        }
-        if (abort_requested()) {
-            log("warn", "goal aborted");
-            break;
-        }
-        std::string b64;
+    // Every vision call starts the same way: a fresh screenshot, marked with a
+    // coordinate grid and the mouse position, plus a local analysis of what is
+    // actually on it.
+    auto prepare_shot = [&](std::string* b64, std::string* analysis) -> bool {
         Image full = capture_screen();
         if (full.empty()) {
             log("fail", "could not capture the screen for visual planning");
-            break;
+            return false;
         }
         Image small = scale_to_fit(full, 1280, 800);
         if (small.empty()) {
             log("fail", "could not prepare the screenshot for visual planning");
-            break;
+            return false;
         }
         Point c = cursor_pos();
         Rect v = virtual_desktop();
-        Image marked = draw_marker(small, (c.x - v.x) * small.w / std::max(1, full.w),
+        remember_map(small, v);  // sclick/smove now aim in this screenshot's pixel space
+        *analysis = visual_report(small);
+        shot_w = small.w;
+        shot_h = small.h;
+        // A labelled grid lets the model read coordinates off the image itself;
+        // the green crosshair marks where the real mouse currently is.
+        Image marked = draw_marker(draw_grid(small, 120),
+                                   (c.x - v.x) * small.w / std::max(1, full.w),
                                    (c.y - v.y) * small.h / std::max(1, full.h));
         std::string shot = take_shot("goal");
         if (shot.empty() || !save_png(small, shot)) {
             log("fail", "could not save the screenshot used for goal planning");
-            break;
+            return false;
         }
         last_shot_ = shot;
 
@@ -1440,7 +1865,7 @@ bool Agent::run_goal(const std::string& goal) {
                           "_" + std::to_string(round) + ".png";
         if (!save_png(marked, tmp)) {
             log("fail", "could not encode the screenshot for the vision model");
-            break;
+            return false;
         }
         FILE* f = fopen(tmp.c_str(), "rb");
         if (f) {
@@ -1457,100 +1882,219 @@ bool Agent::run_goal(const std::string& goal) {
         DeleteFileA(tmp.c_str());
         if (png.empty()) {
             log("fail", "could not read the encoded screenshot for the vision model");
-            break;
+            return false;
         }
-        b64 = b64_encode(png);
-        if (b64.empty()) {
+        *b64 = b64_encode(png);
+        if (b64->empty()) {
             log("fail", "could not encode the screenshot for the vision model request");
-            break;
+            return false;
         }
+        return true;
+    };
 
-        std::string prompt;
-        prompt += "You are the driver of a real Windows desktop. You act by replying with commands "
-                  "only, one per line, in the command language below. Nothing else: no prose, no "
-                  "code fences. The attached image is mandatory visual evidence of the current "
-                  "desktop; inspect it before deciding what to do. Do not guess coordinates or "
-                  "claim an action succeeded without seeing the result in a later screenshot.\n\n"
-                  "Goal: " + goal + "\n\n";
-        prompt += command_reference();
-        prompt += "\nRules:\n"
-                  "- The screenshot is " + std::to_string(small.w) + "x" +
-                  std::to_string(small.h) + " pixels; the physical virtual desktop is " +
-                  std::to_string(v.w) + "x" + std::to_string(v.h) + " at origin (" +
-                  std::to_string(v.x) + "," + std::to_string(v.y) + "). To convert a screenshot "
-                  "point (x,y) to a command coordinate, use desktop_x + round(x * desktop_width / "
-                  "screenshot_width), desktop_y + round(y * desktop_height / screenshot_height).\n"
-                  "- Prefer visible controls and use coordinates derived from this screenshot.\n"
-                  "- Return only the next small batch of up to 3 valid commands, then wait for the "
-                  "next screenshot before choosing further actions.\n"
-                  "- Do not include `done` in a batch that also contains commands. After the "
-                  "resulting screenshot shows the goal is satisfied, reply with exactly: done\n"
-                  "- If an action failed or the screen differs from expectation, use the next "
-                  "screenshot and execution feedback to correct the plan.\n\n";
-        prompt += screen_summary();
-        if (!transcript.empty()) prompt += "\nWhat you already did:\n" + transcript;
-        prompt += "\nThe attached image is the current screen, downscaled to fit the stated "
-                  "dimensions. A green crosshair marks the current mouse position.\n";
+    // The instructions that stay the same for planning and for checking.
+    Rect vdesk = virtual_desktop();
+    auto aim_block = [&]() {
+        std::string s;
+        s += "\nHow to aim (important):\n"
+             "- The attached image is " + std::to_string(shot_w) + "x" + std::to_string(shot_h) +
+             " pixels with a labelled coordinate grid: every grid line is marked with its own "
+             "pixel coordinate, origin 0,0 at the top-left.\n"
+             "- Read a point off the image, then use it directly:\n"
+             "    sclick x y        click that point of the screenshot on the real screen\n"
+             "    smove x y         move the real mouse there\n"
+             "    sdrag x1 y1 x2 y2 drag between two points of the screenshot\n"
+             "  Hawk converts these to real desktop pixels for you. Do NOT scale coordinates "
+             "yourself. Plain `click x y` / `move x y` take absolute desktop pixels (the virtual "
+             "desktop is " + std::to_string(vdesk.w) + "x" + std::to_string(vdesk.h) + " at " +
+             std::to_string(vdesk.x) + "," + std::to_string(vdesk.y) + "); only use those if you "
+             "were given desktop coordinates.\n"
+             "- To hit a coloured control without any coordinate, use `findarea RRGGBB 60 click` "
+             "- it finds the whole region of that colour and clicks its centre.\n"
+             "- To re-read the screen yourself, use `look` (Hawk analyses the screenshot and "
+             "reports the controls it detects) or `elements`.\n"
+             "- Prefer the visible controls listed in the analysis below; they were detected "
+             "from this very screenshot, not invented.\n";
+        return s;
+    };
 
-        std::string reply, err;
-        log("agent", "planning round " + std::to_string(round + 1) + " with " + config.model +
-                         " (screenshot attached: " + std::to_string(small.w) + "x" +
-                         std::to_string(small.h) + ")");
-        if (!llm_chat(prompt, b64, &reply, &err)) {
-            log("fail", "model call failed: " + err);
-            log("info", "no guessed script was run; check the vision-capable model, API key and "
-                        "OpenAI-compatible base URL in Model settings");
-            break;
-        }
-        log("agent", "model said: " + reply.substr(0, 400));
+    while (!done && round < config.max_rounds && total_steps < config.max_steps &&
+           !abort_requested()) {
+        round++;
+        std::string b64, analysis;
+        if (!prepare_shot(&b64, &analysis)) break;
 
-        std::vector<std::string> cmds = parse_commands(reply);
-        if (cmds.empty()) {
-            transcript += "  FAIL model returned no usable commands; reply with valid command "
-                          "lines only\n";
-            log("warn", "model returned no usable commands; asking again with a fresh screenshot");
-            continue;
-        }
-        if (cmds.size() > 3) {
-            log("warn", "model returned more than 3 commands; only the next 3 will be considered");
-            cmds.resize(3);
-        }
-        generated += join_commands(cmds);
-        publish_script(generated);  // visible in the script box, and on disk
-        if (!config.auto_run) {
-            log("warn", "auto-run is off, so the generated script was saved for review and "
-                        "nothing was executed");
-            break;
-        }
-        bool batch_failed = false;
-        bool batch_has_actions = false;
-        for (const std::string& c : cmds) {
-            if (to_lower(c) == "done") {
-                if (!batch_has_actions && !batch_failed) {
-                    done = true;
-                } else {
-                    log("warn", "ignoring `done` in an action batch; requesting a screenshot "
-                                "to verify the result");
-                }
+        // ---------------- plan the whole task, or verify what happened --------
+        if (need_plan || force_check || plan_at >= plan.size()) {
+            std::string prompt;
+            prompt += "You are the driver of a real Windows desktop. You act by replying with "
+                      "commands only, one per line, in the command language below. Nothing "
+                      "else: no prose, no code fences. The attached image is mandatory visual "
+                      "evidence of the current desktop; inspect it before deciding what to do. "
+                      "Do not guess coordinates or claim an action succeeded without seeing the "
+                      "result in a later screenshot.\n\n"
+                      "Goal: " + goal + "\n\n";
+            prompt += command_reference();
+            prompt += aim_block();
+            if (need_plan) {
+                prompt +=
+                    "\nThis is the planning round: write the COMPLETE script for the whole "
+                    "task, one command per line, as many lines as the task needs (up to 30). "
+                    "It will be executed in segments and checked visually between them; you "
+                    "will be asked again before the task is believed done.\n"
+                    "Writing a robust multi-step script:\n"
+                    "- Launch an application with `open <app>`, then `waitfocus <window title>` "
+                    "to wait for its window; never `focus` a window you just launched without "
+                    "waiting.\n"
+                    "- After launching, closing or saving something, allow `wait 1500` (or more) "
+                    "before acting on its result.\n"
+                    "- Type text or source code with one `type` line per line; `\\n` inside a "
+                    "line types Enter, and backslashes in code must be doubled.\n"
+                    "- A save flow looks like: key ctrl+s, wait 1500, type <filename>, key enter.\n"
+                    "- Guard steps that may not apply (a dialog that might not appear) with `try`.\n"
+                    "- Prove the result before finishing: read the saved file back, capture a "
+                    "screenshot, or verifypixel a control you expect to see.\n"
+                    "- Do not include `done`; the last step's screenshot decides completion.\n\n";
+            } else {
+                prompt +=
+                    "\nThis is a verification round: the script so far has been executed and "
+                    "the attached screenshot shows the result. Reply with exactly one of:\n"
+                    "  done                       the goal is visibly satisfied right now\n"
+                    "  continue                   it is on track; execution goes on by itself\n"
+                    "  up to 4 corrective commands  something failed or needs adjusting\n"
+                    "Do not repeat commands that already succeeded. Do not include `done` next "
+                    "to other commands.\n";
+            }
+            prompt += analysis;
+            prompt += "\n";
+            prompt += screen_summary();
+            if (!transcript.empty()) prompt += "\nWhat has been executed so far:\n" + transcript;
+            if (!need_plan && plan_at < plan.size()) {
+                prompt += "\nPlan lines not executed yet:\n";
+                for (size_t i = plan_at; i < plan.size() && i < plan_at + 12; i++)
+                    prompt += "  " + plan[i] + "\n";
+            }
+            prompt += "\nThe attached image is the current screen, downscaled to fit the stated "
+                      "dimensions and overlaid with the coordinate grid described above; its "
+                      "green crosshair marks the current mouse position.\n";
+
+            std::string reply, err;
+            log("agent", std::string(need_plan ? "planning " : "verifying ") + "round " +
+                             std::to_string(round) + " with " + config.model +
+                             " (screenshot attached: " + std::to_string(shot_w) + "x" +
+                             std::to_string(shot_h) + ")");
+            if (!llm_chat(prompt, b64, &reply, &err, need_plan ? 2400 : 900)) {
+                log("fail", "model call failed: " + err);
+                log("info", "no guessed script was run; check the vision-capable model, API key "
+                            "and OpenAI-compatible base URL in Model settings");
                 break;
             }
+            log("agent", "model said: " + reply.substr(0, 400));
+
+            std::vector<std::string> cmds = parse_commands(reply);
+            if (need_plan) {
+                if (cmds.empty()) {
+                    transcript += "  FAIL the model returned no commands for the plan; reply with "
+                                  "command lines only\n";
+                    log("warn", "the model returned no usable plan; asking again with a fresh "
+                                "screenshot");
+                    continue;
+                }
+                if (cmds.size() > 30) cmds.resize(30);
+                plan = cmds;
+                plan_at = 0;
+                need_plan = false;
+                generated = join_commands(plan);
+                publish_script(generated);  // visible in the script box, and on disk
+                log("agent", "plan: the model wrote " + std::to_string(plan.size()) +
+                                 " command(s) for the whole task");
+                for (const std::string& c : plan) log("agent", "plan: " + c);
+                if (!config.auto_run) {
+                    log("warn", "auto-run is off, so the generated script was saved for review "
+                                "and nothing was executed");
+                    break;
+                }
+            } else {
+                std::string t = to_lower(trim(reply));
+                if (cmds.size() == 1 && to_lower(cmds[0]) == "done") {
+                    done = true;
+                    break;
+                }
+                force_check = false;
+                if (cmds.empty()) {
+                    if (t.find("continue") != std::string::npos && plan_at < plan.size()) {
+                        log("agent", "model says continue; executing the rest of the plan");
+                    } else if (plan_at >= plan.size()) {
+                        log("warn", "the model neither said done nor gave corrective commands; "
+                                    "stopping instead of looping");
+                        break;
+                    } else {
+                        transcript += "  FAIL the verification reply was not usable; reply with "
+                                      "done, continue or corrective commands\n";
+                        log("warn", "verification reply was not usable; asking again");
+                    }
+                } else {
+                    // corrective commands go in front of the remaining plan, so they
+                    // run next
+                    int n = 0;
+                    std::vector<std::string> fixes;
+                    for (const std::string& c : cmds) {
+                        if (to_lower(c) == "done") continue;  // done is never accepted mid-batch
+                        if (n++ >= 4) break;
+                        fixes.push_back(c);
+                    }
+                    if (!fixes.empty()) {
+                        log("agent", "corrections: " + std::to_string(fixes.size()) +
+                                         " command(s) to put the task back on track");
+                        plan.insert(plan.begin() + (long)plan_at, fixes.begin(), fixes.end());
+                        generated += join_commands(fixes);
+                        publish_script(generated);
+                    }
+                }
+            }
+        }
+
+        // ------- execute the next segment of the plan, without another call ---
+        int ran_this_segment = 0;
+        while (plan_at < plan.size() && ran_this_segment < config.segment_size && !done) {
             if (total_steps >= config.max_steps) {
                 log("warn", "goal reached the maximum action count");
                 break;
             }
-            if (abort_requested()) break;
+            if (abort_requested()) {
+                log("warn", "goal aborted");
+                break;
+            }
+            std::string c = plan[plan_at++];
+            if (to_lower(trim(c)) == "done") {
+                // A plan that ends in `done` still has to earn it: the next
+                // round looks at a fresh screenshot first.
+                log("warn", "the plan says `done` - verifying with a fresh screenshot before "
+                            "believing it");
+                plan_at = plan.size();
+                break;
+            }
             if (config.step_delay_ms > 0) sleep_ms(config.step_delay_ms);
             bool ok = step(c, 0);
             total_steps++;
-            batch_has_actions = true;
+            ran_this_segment++;
             transcript += (ok ? "  ok   " : "  FAIL ") + c + "\n";
-            log(ok ? "ok" : "fail", "[model] " + c);
+            log(ok ? "ok" : "fail", "[plan] " + c);
             if (!ok) {
-                batch_failed = true;
+                force_check = true;
+                log("warn", "a plan step failed - asking the model what to do next instead of "
+                            "ploughing on");
                 break;
             }
         }
-        if (done) log("ok", "model reports the goal is complete based on the latest screenshot");
+        if (abort_requested() && !done) {
+            log("warn", "goal aborted");
+            break;
+        }
+        if (total_steps >= config.max_steps) {
+            log("warn", "goal reached the maximum action count");
+            break;
+        }
     }
 
     restore_cursor_origin();
