@@ -1,0 +1,2 @@
+0
+372 281474977410379 1792179181444779900 c653b8c82dafd01709cc437325e04101 1 libc\mingw\lib-common\api-ms-win-crt-utility-l1-1-0.def

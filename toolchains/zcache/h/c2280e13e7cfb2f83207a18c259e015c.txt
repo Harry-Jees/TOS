@@ -1,0 +1,2 @@
+0
+461 281474977410370 1792179181444779900 0cbc9ab92ea88e6140ec382c458321bc 1 libc\mingw\lib-common\api-ms-win-crt-locale-l1-1-0.def
