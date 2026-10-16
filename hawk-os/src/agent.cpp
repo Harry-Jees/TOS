@@ -199,11 +199,13 @@ std::string Agent::visual_report(const Image& img) {
 
     std::vector<std::pair<uint32_t, int>> dom = dominant_colors(img, 6);
     if (!dom.empty()) {
+        // dominant_colors returns full-image pixel counts (samples x4); the
+        // sampling loop itself visits one pixel in four.
         int sampled = (img.w / 2 + 1) * (img.h / 2 + 1);
         s += "  dominant colours: ";
         for (size_t i = 0; i < dom.size(); i++) {
             char buf[64];
-            int pct = sampled > 0 ? dom[i].second * 100 / sampled : 0;
+            int pct = sampled > 0 ? (dom[i].second / 4) * 100 / sampled : 0;
             if (pct > 100) pct = 100;
             snprintf(buf, sizeof(buf), "#%s %d%%%s", color_hex(dom[i].first).c_str(), pct,
                      i + 1 < dom.size() ? ", " : "\n");
@@ -2016,7 +2018,11 @@ bool Agent::run_goal(const std::string& goal) {
                 }
             } else {
                 std::string t = to_lower(trim(reply));
-                if (cmds.size() == 1 && to_lower(cmds[0]) == "done") {
+                // Accept "done", "Done." or a line of praise that starts with
+                // it - but only ever from a verification round with a fresh
+                // screenshot in hand.
+                if ((cmds.size() == 1 && to_lower(cmds[0]) == "done") ||
+                    (cmds.empty() && t.rfind("done", 0) == 0)) {
                     done = true;
                     break;
                 }

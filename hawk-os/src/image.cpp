@@ -384,6 +384,8 @@ static int color_dist(uint32_t a, uint32_t b) {
 }
 
 // Mean colour of a box (clamped to the image), 0 when the box is empty.
+// The result uses the RRGGBB packing that parse_color/color_hex/pixel_at use,
+// so a colour typed as `findarea FF840A` compares correctly with real pixels.
 static uint32_t box_mean(const Image& img, int x0, int y0, int x1, int y1) {
     long r = 0, g = 0, b = 0, n = 0;
     if (x0 < 0) x0 = 0;
@@ -400,7 +402,7 @@ static uint32_t box_mean(const Image& img, int x0, int y0, int x1, int y1) {
         }
     }
     if (!n) return 0;
-    return (uint32_t)(b / n) | ((uint32_t)(g / n) << 8) | ((uint32_t)(r / n) << 16);
+    return (uint32_t)(r / n) | ((uint32_t)(g / n) << 8) | ((uint32_t)(b / n) << 16);
 }
 
 std::vector<std::pair<uint32_t, int>> dominant_colors(const Image& img, int top_n) {
@@ -440,8 +442,9 @@ std::vector<std::pair<uint32_t, int>> dominant_colors(const Image& img, int top_
     for (size_t i = 0; i < by_count.size() && (int)out.size() < top_n; i++) {
         int k = by_count[i].first;
         long n = counts[k];
-        uint32_t bgr = (uint32_t)(sb[k] / n) | ((uint32_t)(sg[k] / n) << 8) |
-                       ((uint32_t)(sr[k] / n) << 16);
+        // RRGGBB packing, same as parse_color/color_hex (see box_mean)
+        uint32_t bgr = (uint32_t)(sr[k] / n) | ((uint32_t)(sg[k] / n) << 8) |
+                       ((uint32_t)(sb[k] / n) << 16);
         out.push_back({bgr, (int)(by_count[i].second * 4)});  // counts were sampled 1-in-4
     }
     return out;
@@ -480,7 +483,7 @@ std::vector<UiElement> detect_elements(const Image& img, int max_elements) {
             }
             if (!n) n = 1;
             size_t idx = (size_t)cy * gw + cx;
-            mean[idx] = (uint32_t)(b / n) | ((uint32_t)(g / n) << 8) | ((uint32_t)(r / n) << 16);
+            mean[idx] = (uint32_t)(r / n) | ((uint32_t)(g / n) << 8) | ((uint32_t)(b / n) << 16);
             flat[idx] = (uint8_t)(worst > 255 ? 255 : worst);
         }
     }
@@ -523,9 +526,9 @@ std::vector<UiElement> detect_elements(const Image& img, int max_elements) {
                 int x = cur % gw, y = cur / gw;
                 Comp& c = comps[id];
                 c.cells++;
-                c.b += mean[cur] & 0xFF;
+                c.r += mean[cur] & 0xFF;
                 c.g += (mean[cur] >> 8) & 0xFF;
-                c.r += (mean[cur] >> 16) & 0xFF;
+                c.b += (mean[cur] >> 16) & 0xFF;
                 if (x < c.minx) c.minx = x;
                 if (y < c.miny) c.miny = y;
                 if (x > c.maxx) c.maxx = x;
@@ -551,8 +554,8 @@ std::vector<UiElement> detect_elements(const Image& img, int max_elements) {
         if (w < 44 || h < 14 || w > img.w * 3 / 4 || h > img.h * 3 / 4) continue;
         double fill = (double)c.cells / ((double)(c.maxx - c.minx + 1) * (c.maxy - c.miny + 1));
         if (fill < 0.72) continue;
-        uint32_t color = (uint32_t)(c.b / c.cells) | ((uint32_t)(c.g / c.cells) << 8) |
-                         ((uint32_t)(c.r / c.cells) << 16);
+        uint32_t color = (uint32_t)(c.r / c.cells) | ((uint32_t)(c.g / c.cells) << 8) |
+                         ((uint32_t)(c.b / c.cells) << 16);
         int rr = (int)(color & 0xFF), gg = (int)((color >> 8) & 0xFF), bb = (int)((color >> 16) & 0xFF);
         int sat = std::max(std::max(rr, gg), bb) - std::min(std::min(rr, gg), bb);
         double contrast = color_dist(color, bg) / 510.0;  // 0..1
@@ -565,7 +568,7 @@ std::vector<UiElement> detect_elements(const Image& img, int max_elements) {
         } else if (h >= 16 && h <= 44 && ar >= 2.0 && w <= 900) {
             shape = 0.7;
             kind = "field";
-        } else if (w >= 120 && h >= 90) {
+        } else if (w >= 80 && h >= 80) {
             shape = 0.35;
             kind = "panel";
         }

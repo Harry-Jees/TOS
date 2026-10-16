@@ -233,7 +233,10 @@ bool type_text(const std::wstring& text, std::string* err) {
                 return false;
             }
         }
-        Sleep(2);
+        // A few milliseconds between keys: fast enough to be quick, slow
+        // enough that a busy application (a heavy editor mid-startup, say)
+        // keeps up and no keystroke is dropped or doubled.
+        Sleep(5);
     }
     return true;
 }

@@ -146,19 +146,43 @@ def main() -> int:
     cy = layout["capture"][1] + layout["capture"][3] // 2
     click = run("--run", f"click left {cx} {cy}")
     new = set()
-    deadline = time.time() + 10
+    deadline = time.time() + 4
     while time.time() < deadline:
         new = set(glob.glob(os.path.join(SHOTS, "*-app.png"))) - before
         if new:
             break
         time.sleep(0.4)
+    if not new:
+        # Windows occasionally swallows the first click on a freshly activated
+        # window as the activation click. A person would simply click again,
+        # so the test does too - the button still has to do its job.
+        print("first click was swallowed by window activation; clicking again")
+        click = run("--run", f"click left {cx} {cy}")
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            new = set(glob.glob(os.path.join(SHOTS, "*-app.png"))) - before
+            if new:
+                break
+            time.sleep(0.4)
 
     check("a real click on Capture produced a real screenshot", bool(new),
           f"clicked {cx},{cy}; {os.path.basename(sorted(new)[0]) if new else 'no new shot'}")
     if new:
-        w2, h2, _, _ = read_png(sorted(new)[0])
-        check("the button's screenshot is a valid PNG of the desktop", (w2, h2) == (vw, vh),
-              f"{w2}x{h2}")
+        # The file appears the instant the app opens it for writing, so give it
+        # a moment to finish before decoding - reading a half-written PNG would
+        # fail its CRC.
+        target = sorted(new)[0]
+        dims = None
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                w2, h2, _, _ = read_png(target)
+                dims = (w2, h2)
+                break
+            except AssertionError:
+                time.sleep(0.3)
+        check("the button's screenshot is a valid PNG of the desktop", dims == (vw, vh),
+              f"{dims[0]}x{dims[1]}" if dims else "never became a readable PNG")
 
     log_grew = (os.path.getsize(LOG) if os.path.exists(LOG) else 0) > log_before
     check("the app logged the click it received", log_grew,

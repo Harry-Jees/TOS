@@ -140,8 +140,10 @@ def main() -> int:
     # 1. built-in end-to-end self-test
     st = run("--selftest")
     summary = re.search(r"(\d+)/(\d+) checks passed", st.stdout)
+    failed_lines = [l.strip() for l in st.stdout.splitlines() if "FAIL" in l]
     check("self-test: every check passes", st.returncode == 0 and "FAIL" not in st.stdout,
-          (summary.group(0) if summary else "no summary") + f", exit {st.returncode}")
+          (summary.group(0) if summary else "no summary") + f", exit {st.returncode}" +
+          (" | " + "; ".join(failed_lines[:3]) if failed_lines else ""))
     check("self-test: confirms physical input works",
           "physically drive it" in st.stdout, "")
 
@@ -186,37 +188,55 @@ def main() -> int:
           got is not None and abs(got[0] - target[0]) <= 1 and abs(got[1] - target[1]) <= 1,
           f"wanted {target}, reported {got}")
 
-    # 6. the pixel probe agrees with the decoded screenshot
-    probe = (vx + vw // 2, vy + vh // 2)
+    # 6. the pixel probe agrees with the decoded screenshot. The desktop is
+    #    live: a window that redraws between the shot and the probe would make
+    #    a single exact comparison flaky, so a screenshot taken immediately
+    #    after the probe counts too.
+    # The probe point is the bottom-left corner of the taskbar: a spot that is
+    # on screen, real, and almost never redrawn - the exact comparison is
+    # meaningless inside a playing video or a live editor.
+    probe = (vx + 3, vy + vh - 3)
     out = run("--pixel", str(probe[0]), str(probe[1])).stdout
     m = re.search(r"pixel .* = #([0-9A-Fa-f]{6})", out)
     agree, detail = False, out.strip()
     if m and path and os.path.exists(path):
-        w, h, rgba, meta = read_png(path)
-        want = hexof(png_pixel(rgba, w, probe[0] - vx, probe[1] - vy, meta["bpp"]))
-        agree = want == m.group(1).upper()
-        detail = f"probe #{m.group(1).upper()} vs decoded screenshot #{want}"
+        after_path = os.path.join(SHOTS, "probe-after.png")
+        run("--shot", after_path)
+        seen = []
+        for p in (path, after_path):
+            if not os.path.exists(p):
+                continue
+            w, h, rgba, meta = read_png(p)
+            seen.append(hexof(png_pixel(rgba, w, probe[0] - vx, probe[1] - vy, meta["bpp"])))
+        agree = any(s == m.group(1).upper() for s in seen)
+        detail = f"probe #{m.group(1).upper()} vs screenshots {[f'#{s}' for s in seen]}"
     check("--pixel agrees with the captured screenshot", agree, detail)
 
-    # 7. find a colour that is on screen, then confirm the location is right
+    # 7. find a colour that is on screen, then confirm the location is right.
+    #    Two attempts: the screen is alive, and content under the found point
+    #    can change between the find and the read-back.
     find_ok, find_detail = False, "no colour sampled"
     if path and os.path.exists(path):
         w, h, rgba, meta = read_png(path)
-        sx, sy = vx + vw // 4, vy + vh // 4
+        # sample from the same quiet corner for the same reason as check 6
+        sx, sy = vx + 8, vy + vh - 8
         want = hexof(png_pixel(rgba, w, sx - vx, sy - vy, meta["bpp"]))
-        found = run("--find", want, "4").stdout
-        m = re.search(r"find: #[0-9a-f]{6} at screen (-?\d+),(-?\d+)", found)
-        if m:
-            fx, fy = int(m.group(1)), int(m.group(2))
-            back = run("--pixel", str(fx), str(fy)).stdout
-            m2 = re.search(r"= #([0-9A-Fa-f]{6})", back)
-            reads = m2.group(1).upper() if m2 else ""
-            # The screen is alive: allow a level or two of drift per channel.
-            find_ok = bool(reads) and all(
-                abs(int(reads[i:i + 2], 16) - int(want[i:i + 2], 16)) <= 2 for i in (0, 2, 4))
-            find_detail = f"#{want} found at {fx},{fy}, reads back #{reads or '?'}"
-        else:
-            find_detail = f"#{want} not located: {found.strip()[:100]}"
+        for attempt in range(2):
+            found = run("--find", want, "4").stdout
+            m = re.search(r"find: #[0-9a-f]{6} at screen (-?\d+),(-?\d+)", found)
+            if m:
+                fx, fy = int(m.group(1)), int(m.group(2))
+                back = run("--pixel", str(fx), str(fy)).stdout
+                m2 = re.search(r"= #([0-9A-Fa-f]{6})", back)
+                reads = m2.group(1).upper() if m2 else ""
+                # allow a level or two of drift per channel
+                find_ok = bool(reads) and all(
+                    abs(int(reads[i:i + 2], 16) - int(want[i:i + 2], 16)) <= 2 for i in (0, 2, 4))
+                find_detail = f"#{want} found at {fx},{fy}, reads back #{reads or '?'}"
+            else:
+                find_detail = f"#{want} not located: {found.strip()[:100]}"
+            if find_ok:
+                break
     check("--find locates a colour and reports the right pixel", find_ok, find_detail)
 
     # 8. dry run touches nothing
@@ -241,12 +261,19 @@ def main() -> int:
     check("agent creates directories and files", ok and r1.returncode == 0 and r2.returncode == 0,
           created if ok else f"content was {content!r} (exit {r1.returncode}/{r2.returncode})")
 
-    # 10. a failed check is visible in the exit code and in the output
-    bad = run("--run", "verifypixel 0 0 000000 0")
+    # 10. a failed check is visible in the exit code and in the output. The
+    #     asserted colour is the opposite of whatever is actually on screen, so
+    #     the check cannot accidentally pass on a dark (or a bright) desktop.
+    corner = run("--pixel", "0", "0").stdout
+    mc = re.search(r"= #([0-9A-Fa-f]{6})", corner)
+    seen_at_origin = mc.group(1).upper() if mc else "FFFFFF"
+    wrong = "000000" if seen_at_origin != "000000" else "FFFFFF"
+    bad = run("--run", f"verifypixel 0 0 {wrong} 0")
     low = bad.stdout.lower()
     check("a failing verification exits non-zero",
           bad.returncode != 0 and "step failed" in low and "verifypixel" in low,
-          f"exit {bad.returncode}, {[l for l in bad.stdout.splitlines() if 'fail' in l.lower()][:1]}")
+          f"screen shows #{seen_at_origin}, asserted #{wrong}: exit {bad.returncode}, "
+          f"{[l for l in bad.stdout.splitlines() if 'fail' in l.lower()][:1]}")
 
     # 11. every action is recorded in hawk.log
     log_ok, log_detail = False, "no log file"

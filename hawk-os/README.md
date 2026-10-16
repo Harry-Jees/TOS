@@ -136,6 +136,9 @@ bolted on:
 * **STOP** button aborts the run between steps, instantly.
 * **Ctrl+Alt+H** is a global hotkey that aborts even if the window is not
   focused. **Holding ESC** aborts too — checked before every action.
+* A click that lands on a background window brings it to the front first —
+  the attention a person pays before they click — so multi-window flows don't
+  lose clicks to Windows' activation-click behaviour.
 * **Dry run** executes the whole script with every action logged instead of
   performed, so you can read what it *would* have done first.
 * **Restore cursor** (on by default) puts the mouse back where it started when
@@ -156,29 +159,42 @@ doing, every time.
 
 Not "it compiled". These are the checks that ran against the built binary:
 
-* **`hawk.exe --selftest` — 18/18.** It builds a real window with a real target
+* **`hawk.exe --selftest` — 21/21.** It builds a real window with a real target
   square, then uses its own input engine to move the cursor there and click:
   the click arrives as a `WM_LBUTTONDOWN` at client `85,125`, inside the
   target. It also types 16 characters into a live `EDIT` control (all 16 arrive
   in order), captures the screen, writes and re-reads a PNG, finds a colour it
-  painted, and proves a dry-run script executes nothing.
+  painted, and proves a dry-run script executes nothing. The vision
+  primitives get the same treatment: `findarea` has to locate the whole blue
+  square it painted, `detect_elements` has to rank that control, and
+  `draw_grid` has to visibly overlay its grid.
 * **`python tests/test_hawk.py` — 19/19.** Drives the CLI and inspects the
   artefacts: PNGs are fully decoded in Python (all five filter types, every
   CRC checked), the pixel the tool reports is compared against the decoded
   screenshot, `find` is verified by probing the location it returned, the
   fallback encoder is exercised with `HAWK_NO_WIC=1`, and goal-mode checks
   confirm screenshot attachment, vision requirements, and no guessed-plan
-  fallback when a model request fails.
+  fallback when a model request fails. The pixel-comparison checks sample a
+  quiet corner of the taskbar and accept a screenshot taken immediately after
+  the probe, so a desktop with a playing video or a live editor open cannot
+  make them lie.
+* **`python tools/verify_goal_loop.py` — 3/3.** Runs the plan → execute →
+  verify loop against a local mock model, no API key needed: a plan is written,
+  executed and verified `done`; a corrective batch from a verify round is
+  inserted and executed; a plan that ends in `done` is verified with a fresh
+  screenshot instead of believed. Every vision request is asserted to really
+  carry the screenshot.
 * **`python tests/test_gui.py` — 12/12.** Starts the app, checks the geometry
   it publishes, and confirms from captured pixels that the accent Run button,
   the red STOP button, the header gradient and the screen preview really
   rendered. Then it clicks the app's own **Capture** button *with Hawk OS's own
   input engine* and asserts a new screenshot appeared on disk.
 * **`python tests/test_real_app.py` — 5/5.** Opens Notepad (a real third-party
-  application), types 55 characters with synthetic keystrokes, presses Ctrl+S,
-  types a filename into Notepad's own Save dialog, presses Enter — and the test
-  then reads `~/Documents/hawk-agent-proof.txt` from disk and checks the text
-  matches byte for byte.
+  application), opens a fresh tab, types 55 characters with synthetic
+  keystrokes, presses Save As (Ctrl+Shift+S), types a filename into Notepad's
+  own Save dialog, presses Enter — and the test then reads
+  `~/Documents/hawk-agent-proof.txt` from disk and checks the text matches byte
+  for byte.
 
 Screenshots are compressed by Windows Imaging Component (a 1600x900 capture is
 ~150-300 KB instead of 5.7 MB raw), which matters because goal mode has to send
@@ -199,9 +215,11 @@ prefixed `goal`.
   The logger reports the drift, and dry run plus STOP are the answer. This is
   why checks that would otherwise be pixel-exact are asserted against the
   position the OS reported at injection time, not a moment later.
-* **Vision planning costs money and can be wrong.** The model only sees a
-  downscaled still image; `verifypixel` and `find` exist so a script can check
-  its own work instead of trusting the plan.
+* **Vision planning costs money and can be wrong.** The model sees a downscaled
+  still image plus Hawk's own local analysis of it; `verifypixel`, `find`,
+  `findarea` and `look` exist so a script can check its own work instead of
+  trusting the plan. A key without inference access is reported exactly as it
+  is (HTTP 403) - Hawk never falls back to guessing a plan.
 * **Nothing is code-signed**, so SmartScreen will warn the first time. There is
   no auto-update and no telemetry.
 * **PNG fallback is uncompressed.** Without WIC you get valid but large files.
@@ -225,6 +243,7 @@ hawk-os/
   src/ui.cpp          the app window, preview, ownerdraw controls, worker thread
   src/main.cpp        entry point, CLI, self-test
   tests/              the three suites described above
+  tools/              verify_goal_loop.py (offline goal-loop checks) + probes
   examples/           ready-to-run command scripts
   shots/              captures (git-ignored)
   workspace/          files the agent writes with relative paths

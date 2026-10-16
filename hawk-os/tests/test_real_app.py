@@ -13,7 +13,6 @@ This drives the live desktop, so it is not part of the default suite.
 from __future__ import annotations
 
 import os
-import glob
 import subprocess
 import sys
 import time
@@ -31,8 +30,17 @@ def find_file(name: str) -> str:
         candidate = os.path.join(home, folder, name)
         if os.path.exists(candidate):
             return candidate
-    hits = glob.glob(os.path.join(home, "**", name), recursive=True)
-    return hits[0] if hits else ""
+    # Bounded fallback: only the folders a save dialog realistically lands in.
+    # A full recursive walk of the profile (AppData alone is huge) makes this
+    # test take minutes for no benefit.
+    for folder in ("Documents", "Desktop", "Downloads", "OneDrive"):
+        root = os.path.join(home, folder)
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _, files in os.walk(root):
+            if name in files:
+                return os.path.join(dirpath, name)
+    return ""
 
 
 def main() -> int:
@@ -43,16 +51,32 @@ def main() -> int:
     existing = find_file(FILENAME)
     if existing:
         os.remove(existing)
-    run("--run", "close Notepad")  # clear any leftover window
-    time.sleep(0.5)
+    # Clear every leftover Notepad window: Windows 11 Notepad restores tabs
+    # from the previous session, and a restored *named* tab makes Ctrl+S save
+    # silently instead of opening the Save dialog this test drives.
+    for _ in range(6):
+        run("--run", "close Notepad")
+        time.sleep(0.5)
+        run("--run", "try key alt+n")  # discard unsaved changes if prompted
+        time.sleep(0.4)
+        if "Notepad" not in run("--windows").stdout:
+            break
+    time.sleep(0.8)
 
     script = "\n".join([
         "open notepad",
         "wait 2200",
         "focus Notepad",
+        # a fresh, empty document: clear whatever a previous session left in
+        # the tab, so the saved file holds exactly the typed text
+        "key ctrl+a",
+        "key delete",
+        "wait 400",
         f"type {TEXT}",
         "wait 400",
-        "key ctrl+s",
+        # Save As explicitly: with a restored named tab, plain Ctrl+S would
+        # save silently and skip the dialog this test is about.
+        "key ctrl+shift+s",
         "wait 1800",
         f"type {FILENAME}",
         "key enter",

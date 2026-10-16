@@ -289,6 +289,53 @@ int run_selftest() {
               abs(hit.x - (target.x - v.x)) < 60 && abs(hit.y - (target.y - v.y)) < 60,
           found_colour ? ("at " + std::to_string(hit.x) + "," + std::to_string(hit.y)) : "not found");
 
+    // 8b. the local vision primitives: whole-region colour search, control
+    //     detection and the labelled grid - the parts that let a script see
+    //     without a model.
+    {
+        Rect area;
+        bool blob = find_color_area(fresh, blue, 60, &area);
+        // `target` is the middle of the blue square, so a correct blob must
+        // cover that point and be about the size of the square
+        bool covers = blob && area.w >= 60 && area.h >= 60 &&
+                      area.contains(target.x - v.x, target.y - v.y);
+        check("findarea locates the whole blue square",
+              covers,
+              blob ? ("region " + std::to_string(area.x) + "," + std::to_string(area.y) + " " +
+                      std::to_string(area.w) + "x" + std::to_string(area.h))
+                   : "not found");
+
+        std::vector<UiElement> els = detect_elements(fresh, 12);
+        bool blue_ranked = false;
+        std::string top;
+        for (const UiElement& e : els) {
+            int d = abs((int)(e.color & 0xFF) - (int)(blue & 0xFF)) +
+                    abs((int)((e.color >> 8) & 0xFF) - (int)((blue >> 8) & 0xFF)) +
+                    abs((int)((e.color >> 16) & 0xFF) - (int)((blue >> 16) & 0xFF));
+            if (d <= 60) blue_ranked = true;
+            if (top.empty())
+                top = std::string(e.kind) + " at " + std::to_string(e.rect.x) + "," +
+                      std::to_string(e.rect.y);
+        }
+        check("detect_elements ranks the blue control",
+              blue_ranked, (std::to_string(els.size()) + " control(s), top: " + top).c_str());
+
+        Image gridded = draw_grid(crop(win_img, 0, 0, win_img.w > 300 ? 300 : win_img.w,
+                                       win_img.h > 200 ? 200 : win_img.h), 100);
+        bool changed = false;
+        if (!gridded.empty()) {
+            // a grid line is drawn at x=100 and y=100; those pixels must now
+            // differ from the ungridded original
+            Image plain = crop(win_img, 0, 0, gridded.w, gridded.h);
+            for (int y = 0; y < gridded.h && !changed; y += 5)
+                if (gridded.at(100, y) != plain.at(100, y)) changed = true;
+            for (int x = 0; x < gridded.w && !changed; x += 5)
+                if (gridded.at(x, 100) != plain.at(x, 100)) changed = true;
+        }
+        check("draw_grid overlays a labelled grid", !gridded.empty() && changed,
+              changed ? "grid line drawn" : "no grid line found");
+    }
+
     // 9. typing into a real control
     SetFocus(g_edit);
     focus_window(hwnd);
