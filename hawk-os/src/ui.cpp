@@ -88,7 +88,7 @@ struct UiState {
     DWORD suppress_click_until = 0;
     bool click_through = false;
     bool dry_run = false;
-    bool auto_run = true;
+    bool auto_run = false;
     bool follow_log = true;
     std::string status_text = "idle";
     std::string run_state = "idle";   // idle | running | stopping
@@ -797,7 +797,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                                 hwnd, (HMENU)ID_CHK_AUTORUN, nullptr, nullptr);
             SendMessageW(g_ui->chk_restore, BM_SETCHECK, BST_CHECKED, 0);
-            SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_CHECKED, 0);
+            SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_UNCHECKED, 0);
 
             for (HWND h : {g_ui->goal, g_ui->chk_dry, g_ui->chk_restore, g_ui->chk_click,
                            g_ui->chk_autorun})
