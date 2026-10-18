@@ -2,6 +2,10 @@
 
 Hawk can control the real Windows desktop. Treat it as privileged automation software, not a harmless chatbot.
 
+## Screenshot and credential privacy
+
+The desktop UI asks before sending screenshots to the configured model provider. CLI users must explicitly pass `--allow-screen-upload` for image-bearing model requests. Do not use that option with untrusted scripts or endpoints. Non-loopback API endpoints must use HTTPS. Saved API keys use Windows DPAPI for the current Windows user; legacy plaintext settings may still be read for migration, so resave settings after upgrading.
+
 ## Reporting a vulnerability
 
 Please do not publish exploitable details in a public issue. Contact the repository owner privately through GitHub's security advisory feature (Security → Advisories → Report a vulnerability). Include affected version/commit, reproduction steps, impact, and any safe proof of concept.
