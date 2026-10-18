@@ -447,6 +447,45 @@ bool Agent::look() {
     return true;
 }
 
+// Compile bounded workflow variables/branches before any desktop action.
+static bool compile_workflow_logic(const std::string& input, std::string* output, std::string* error) {
+ struct V{std::string n,v;}; struct B{bool parent,condition,otherwise;};
+ std::vector<V> vars; std::vector<B> stack;
+ auto active=[&](){for(const auto& b:stack)if(!b.parent||(b.otherwise?b.condition:!b.condition))return false;return true;};
+ auto get=[&](const std::string& n){for(auto i=vars.rbegin();i!=vars.rend();++i)if(i->n==n)return i->v;return std::string();};
+ output->clear();size_t pos=0;
+ while(pos<input.size()){
+  size_t nl=input.find('\n',pos);bool hn=nl!=std::string::npos;std::string line=input.substr(pos,hn?nl-pos:std::string::npos);pos=hn?nl+1:input.size();
+  auto w=split_words(trim(line));std::string cmd=w.empty()?"":to_lower(w[0]);
+  if(cmd=="set"){
+   if(w.size()<3||w[1].empty()||w[1].size()>40||!std::all_of(w[1].begin(),w[1].end(),[](unsigned char c){return isalnum(c)||c=='_';})){*error="invalid set syntax; use: set name value";return false;}
+   if(active()){std::string val=remainder_after(trim(line),2);if(val.size()>4096){*error="variable value exceeds 4096 bytes";return false;}bool found=false;for(auto& v:vars)if(v.n==w[1]){v.v=val;found=true;break;}if(!found){if(vars.size()>=64){*error="variable limit (64) exceeded";return false;}vars.push_back({w[1],val});}}
+  }else if(cmd=="if"){
+   if(w.size()!=4||w[2]!="=="){*error="invalid condition; use: if name == value";return false;}if(stack.size()>=16){*error="conditional nesting exceeds 16 levels";return false;}
+   bool parent=active();std::string rhs=w[3];if(rhs.size()>1&&rhs[0]=='$')rhs=get(rhs.substr(1));stack.push_back({parent,get(w[1])==rhs,false});
+  }else if(cmd=="else"){if(w.size()!=1||stack.empty()||stack.back().otherwise){*error="unexpected or duplicate else";return false;}stack.back().otherwise=true;
+  }else if(cmd=="endif"){if(w.size()!=1||stack.empty()){*error="unexpected endif";return false;}stack.pop_back();
+  }else if(active()){
+   for(const auto& v:vars){std::string key="$"+v.n;size_t at=0;while((at=line.find(key,at))!=std::string::npos){size_t e=at+key.size();if(e<line.size()&&(isalnum((unsigned char)line[e])||line[e]=='_')){at=e;continue;}line.replace(at,key.size(),v.v);at+=v.v.size();}}
+   if(line.size()>1024*1024-output->size()){*error="compiled workflow exceeds the 1 MiB limit";return false;}output->append(line);if(hn)output->push_back('\n');
+  }
+ }
+ if(!stack.empty()){*error="unclosed if block; expected endif";return false;}return true;
+}
+static void append_outcome_record(int steps,int failures,const char* status,const std::string& workflow){
+ const std::string dir=app_dir()+"\\workspace";CreateDirectoryA(dir.c_str(),nullptr);
+ HANDLE h=CreateFileA((dir+"\\run-outcomes.jsonl").c_str(),FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(h==INVALID_HANDLE_VALUE)return;
+ char row[256];int n=snprintf(row,sizeof(row),"{\"status\":\"%s\",\"workflow\":\"%s\",\"steps\":%d,\"failures\":%d}\r\n",status,workflow.c_str(),steps,failures);DWORD written=0;
+ if(n>0&&n<(int)sizeof(row))WriteFile(h,row,(DWORD)n,&written,nullptr);CloseHandle(h);
+}
+struct WorkflowScore { std::string name; int successes=0; int failures=0; };
+static std::vector<WorkflowScore> read_workflow_scores() {
+ std::vector<WorkflowScore> scores;FILE* f=fopen((app_dir()+"\\workspace\\run-outcomes.jsonl").c_str(),"rb");if(!f)return scores;char line[1024];
+ while(fgets(line,sizeof(line),f)){std::string row=line;size_t p=row.find("\"workflow\":\"");if(p==std::string::npos)continue;p+=12;size_t e=row.find('"',p);if(e==std::string::npos||e==p)continue;
+  std::string name=row.substr(p,e-p);if(!valid_workflow_name(name))continue;size_t ix=0;for(;ix<scores.size();++ix)if(scores[ix].name==name)break;if(ix==scores.size())scores.push_back({name,0,0});
+  if(row.find("\"status\":\"completed\"")!=std::string::npos&&row.find("\"failures\":0")!=std::string::npos)scores[ix].successes++;else scores[ix].failures++;
+ }fclose(f);return scores;
+}
 // ------------------------------------------------------------------- script --
 bool Agent::run_script(const std::string& source_script) {
     std::string script;
@@ -457,6 +496,9 @@ bool Agent::run_script(const std::string& source_script) {
     }
     if (script != source_script)
         log("info", "expanded saved workflow reference(s) before execution");
+    std::string compiled_script, compile_error;
+    if (!compile_workflow_logic(script, &compiled_script, &compile_error)) { log("fail", "workflow compilation failed before execution: " + compile_error); return false; }
+    script.swap(compiled_script);
     Point cursor_before = cursor_pos();
     if (config.restore_cursor) save_cursor_origin();
     request_abort(false);
@@ -522,6 +564,7 @@ bool Agent::run_script(const std::string& source_script) {
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
     log(failed ? "warn" : "ok", buf);
+    if (!config.dry_run) { std::string workflow_name;size_t scan=0;while(scan<source_script.size()){size_t nl=source_script.find('\n',scan);std::string line=source_script.substr(scan,nl==std::string::npos?std::string::npos:nl-scan);auto words=split_words(trim(line));if(words.size()==3&&to_lower(words[0])=="workflow"&&to_lower(words[1])=="run"&&valid_workflow_name(words[2])){workflow_name=words[2];break;}if(nl==std::string::npos)break;scan=nl+1;}append_outcome_record(executed,failed,checkpoint_status,workflow_name); }
     Point after = cursor_pos();
     if (after.x != cursor_before.x || after.y != cursor_before.y)
         log("info", "cursor moved " + std::to_string(cursor_before.x) + "," +
@@ -569,6 +612,9 @@ bool Agent::step(const std::string& raw_line, int depth) {
         sensitive_reason = "Delete a file from Hawk's workspace";
     } else if (cmd == "close") {
         sensitive_reason = "Close a running application/window";
+    } else if (cmd == "browser" && a.size() > 1) {
+        const std::string op=to_lower(a[1]);
+        if(op=="click"||op=="fill"||op=="navigate")sensitive_reason="Interact with a live browser page via local DevTools: "+op;
     } else if (cmd == "uia" && a.size() > 2) {
         const std::string operation = to_lower(a[1]);
         const std::string target = to_lower(a[2]);
@@ -604,6 +650,8 @@ bool Agent::step(const std::string& raw_line, int depth) {
         }
     } else if (cmd == "workflow" && a.size() > 1 && to_lower(a[1]) == "save") {
         sensitive_reason = "Save a reusable workflow that may contain text inputs; review its script before approval";
+    } else if (cmd == "workflow" && a.size() > 2 && to_lower(a[1]) == "record") {
+        sensitive_reason = "Record global mouse/keyboard input or save a recorded workflow; captured keystrokes may include secrets";
     } else if (cmd == "open") {
         std::string target = to_lower(trim(rest(1)));
         static const char* safe_apps[] = {"notepad", "calc", "mspaint", "explorer",
@@ -627,6 +675,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (cmd == "uia" && a.size() > 3 && to_lower(a[1]) == "set") {
             details = "uia set \"" + a[2] + "\" [value redacted]";
         }
+        if(cmd=="browser"&&a.size()>3&&to_lower(a[1])=="fill")details="browser fill \""+a[2]+"\" [value redacted]";
         if (details.size() > 220) details.resize(220);
         bool approved = on_approval && on_approval(sensitive_reason, details);
         if (!approved) {
@@ -1450,10 +1499,29 @@ bool Agent::step(const std::string& raw_line, int depth) {
         return false;
     }
 
+    // ---- local browser DOM adapter ----
+    if(cmd=="browser"){std::string result,browser_error;if(!browser_command(a,config.dry_run,&result,&browser_error)){log("fail","browser: "+browser_error);return false;}log("ok","browser: "+result);return true;}
+
     // ---- reusable workflows ----
     if (cmd == "workflow") {
         if (!need(1)) return false;
         const std::string operation = to_lower(a[1]);
+        if(operation=="record"){
+            if(a.size()==3&&to_lower(a[2])=="start"){if(config.dry_run){log("fail","workflow recording is unavailable in dry-run mode");return false;}std::string e;if(!start_input_recording(&e)){log("fail","workflow record: "+e);return false;}log("warn","RECORDING ACTIVE: global clicks and key chords are captured locally; do not type passwords or secrets. Run 'workflow record stop <name>' to finish.");return true;}
+            if(a.size()==4&&to_lower(a[2])=="stop"){
+                const std::string name=a[3];if(!valid_workflow_name(name)){log("fail","workflow record stop: invalid workflow name");return false;}
+                std::string body,e,path;if(!workflow_file_path(name,&path)){log("fail","workflow record: unsafe workflow path");return false;}
+                if(GetFileAttributesA(path.c_str())!=INVALID_FILE_ATTRIBUTES){log("fail","workflow record: workflow already exists; choose another name");return false;}
+                if(config.dry_run){log("fail","workflow record is unavailable in dry-run mode");return false;}
+                if(!stop_input_recording(&body,&e)){log("fail","workflow record: "+e);return false;}
+                HANDLE file=CreateFileA(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+                if(file==INVALID_HANDLE_VALUE){log("fail","workflow record: file cannot be created; recording stopped but not saved");return false;}
+                DWORD written=0;bool ok=WriteFile(file,body.data(),(DWORD)body.size(),&written,nullptr)&&written==body.size()&&FlushFileBuffers(file);CloseHandle(file);
+                if(!ok){DeleteFileA(path.c_str());log("fail","workflow record: could not save complete workflow");return false;}
+                log("ok","recorded workflow '"+name+"' ("+std::to_string(body.size())+" bytes); review it before replay");return true;
+            }
+            log("fail","workflow record syntax: workflow record start | workflow record stop <name>");return false;
+        }
         if (operation == "save") {
             if (!need(2)) return false;
             const std::string name = a[2];
@@ -1544,11 +1612,18 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("info", listing);
             return true;
         }
+        if(operation=="stats"||operation=="recommend"){
+            auto scores=read_workflow_scores();scores.erase(std::remove_if(scores.begin(),scores.end(),[](const WorkflowScore& x){std::string p;return !workflow_file_path(x.name,&p)||GetFileAttributesA(p.c_str())==INVALID_FILE_ATTRIBUTES;}),scores.end());
+            if(scores.empty()){log("info","workflow memory: no completed runs recorded yet");return true;}
+            std::sort(scores.begin(),scores.end(),[](const WorkflowScore& x,const WorkflowScore& y){int xt=x.successes+x.failures,yt=y.successes+y.failures;double xs=(x.successes+1.0)/(xt+2.0),ys=(y.successes+1.0)/(yt+2.0);return xs==ys?xt>yt:xs>ys;});
+            if(operation=="recommend"){const auto& x=scores.front();int total=x.successes+x.failures;log("info","recommended workflow: "+x.name+" ("+std::to_string(x.successes)+"/"+std::to_string(total)+" successful runs; smoothed score "+std::to_string((x.successes+1.0)/(total+2.0))+")");}
+            else{std::string report="workflow outcome memory:";for(const auto& x:scores)report+="\n  "+x.name+": "+std::to_string(x.successes)+" success, "+std::to_string(x.failures)+" failed";log("info",report);}return true;
+        }
         if (operation == "run") {
             log("fail", "workflow run must be a standalone script line so it can be expanded before execution");
             return false;
         }
-        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow run <name>");
+        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow record start|stop <name> | workflow stats | workflow recommend | workflow run <name>");
         return false;
     }
 
