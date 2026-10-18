@@ -626,6 +626,8 @@ bool Agent::step(const std::string& raw_line, int depth) {
         }
     } else if (cmd == "workflow" && a.size() > 1 && to_lower(a[1]) == "save") {
         sensitive_reason = "Save a reusable workflow that may contain text inputs; review its script before approval";
+    } else if (cmd == "workflow" && a.size() > 2 && to_lower(a[1]) == "record") {
+        sensitive_reason = "Record global mouse/keyboard input or save a recorded workflow; captured keystrokes may include secrets";
     } else if (cmd == "open") {
         std::string target = to_lower(trim(rest(1)));
         static const char* safe_apps[] = {"notepad", "calc", "mspaint", "explorer",
@@ -1487,6 +1489,30 @@ bool Agent::step(const std::string& raw_line, int depth) {
     if (cmd == "workflow") {
         if (!need(1)) return false;
         const std::string operation = to_lower(a[1]);
+        if (operation == "record") {
+            if (a.size() == 3 && to_lower(a[2]) == "start") {
+                std::string record_error;
+                if (!start_input_recording(&record_error)) { log("fail", "workflow record: " + record_error); return false; }
+                log("warn", "RECORDING ACTIVE: global clicks and key chords are captured locally; do not type passwords or secrets. Run 'workflow record stop <name>' to finish.");
+                return true;
+            }
+            if (a.size() == 4 && to_lower(a[2]) == "stop") {
+                const std::string name=a[3];
+                if (!valid_workflow_name(name)) { log("fail", "workflow record stop: invalid workflow name"); return false; }
+                std::string body, record_error, path;
+                if (!stop_input_recording(&body,&record_error)) { log("fail", "workflow record: " + record_error); return false; }
+                if (!workflow_file_path(name,&path)) { log("fail", "workflow record: unsafe workflow path"); return false; }
+                HANDLE file=CreateFileA(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+                if(file==INVALID_HANDLE_VALUE){log("fail","workflow record: file exists or cannot be created; recording was stopped but not saved");return false;}
+                DWORD written=0;bool ok=WriteFile(file,body.data(),(DWORD)body.size(),&written,nullptr)&&written==body.size()&&FlushFileBuffers(file);
+                CloseHandle(file);
+                if(!ok){DeleteFileA(path.c_str());log("fail","workflow record: could not save complete workflow");return false;}
+                log("ok","recorded workflow '"+name+"' ("+std::to_string(body.size())+" bytes); review it before replay");
+                return true;
+            }
+            log("fail","workflow record syntax: workflow record start | workflow record stop <name>");
+            return false;
+        }
         if (operation == "save") {
             if (!need(2)) return false;
             const std::string name = a[2];
