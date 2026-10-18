@@ -16,6 +16,8 @@ Please do not publish exploitable details in a public issue. Contact the reposit
 - Goal mode warns before sending a screenshot to the configured model provider.
 - The file command language is intended to stay inside Hawk's workspace and rejects absolute paths, profile shortcuts, traversal components, and existing reparse-point paths.
 - New `write` operations refuse to overwrite an existing workspace file; deleting a file is an explicit action.
+- Semantic UI Automation actions target a uniquely named, visible, enabled control in the selected external app. Ambiguous names fail closed; high-impact labels and credential/payment fields require approval when detected.
+- State-changing semantic actions trigger a fresh visual verification round before the goal plan continues. UI Automation success is not proof that the user's overall goal was achieved.
 - The settings UI stores API keys using Windows DPAPI for the current Windows user. Legacy plaintext `api_key=` entries remain readable for migration; open Model settings and save to rewrite them in protected form.
 - Typed text is no longer copied into Hawk's action log.
 
