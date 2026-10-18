@@ -551,16 +551,17 @@ bool Agent::run_script(const std::string& source_script) {
     script.swap(compiled_script);
     const uint64_t script_hash=task_script_hash(script);
     const std::string workflow_name=workflow_name_from_script(source_script);
-    Point cursor_before=cursor_pos();if(config.restore_cursor)save_cursor_origin();
-    request_abort(false);stop_=false;
     int executed=0,failed=0;const int step_limit=config.max_steps>0?config.max_steps:150;
     size_t pos=0;const char* checkpoint_status="running";
+    Point cursor_before=cursor_pos();if(config.restore_cursor)save_cursor_origin();
+    request_abort(false);stop_=false;
     if(resume_requested_){
         if(workflow_name!=resume_expected_name_||script_hash!=resume_expected_hash_){resume_requested_=false;log("fail","workflow resume: saved workflow changed since checkpoint; refusing stale replay");return false;}
         if(resume_offset_>script.size()||(resume_offset_>0&&script[resume_offset_-1]!='\n')){resume_requested_=false;log("fail","workflow resume: checkpoint offset is not a valid line boundary");return false;}
         pos=resume_offset_;executed=resume_steps_;resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();
     }
     log("info","run start: "+std::to_string(split_words(script).size())+" token(s) of input");
+    size_t checkpoint_offset=pos;
     if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,pos,script_hash,workflow_name);
     while(pos<=script.size()){
         const size_t line_start=pos;size_t nl=script.find('\n',pos);
@@ -569,13 +570,13 @@ bool Agent::run_script(const std::string& source_script) {
         std::string t=trim(line);if(t.empty()||t[0]=='#')continue;
         if(t=="done"){log("ok","script signalled done");break;}
         if(abort_requested()){
-            log("warn","aborted by user (ESC or STOP)");checkpoint_status="aborted";
+            log("warn","aborted by user (ESC or STOP)");checkpoint_status="aborted";checkpoint_offset=line_start;
             if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);
             failed++;break;
         }
         if(executed>=step_limit){
             log("fail","run stopped: command limit reached ("+std::to_string(step_limit)+"); split the task into smaller scripts");
-            checkpoint_status="limit_reached";if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);failed++;break;
+            checkpoint_status="limit_reached";checkpoint_offset=line_start;if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);failed++;break;
         }
         if(config.step_delay_ms>0)sleep_ms(bounded_ms(config.step_delay_ms,350));
         if(abort_requested()){
@@ -585,15 +586,16 @@ bool Agent::run_script(const std::string& source_script) {
         executed++;
         if(!config.dry_run)write_run_checkpoint("step_in_progress",executed,line_start,script_hash,workflow_name);
         if(!step(t,0)){
-            failed++;log("fail","step failed: "+t);checkpoint_status="failed";
+            failed++;log("fail","step failed: "+t);checkpoint_status="failed";checkpoint_offset=line_start;
             if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);
             if(config.dry_run)continue;
             log("warn","stopping: a failed step means the state is no longer what the script expects");break;
         }
+        checkpoint_offset=pos;
         if(!config.dry_run)write_run_checkpoint("running",executed,pos,script_hash,workflow_name);
     }
     if(failed==0)checkpoint_status="completed";else if(std::string(checkpoint_status)=="running")checkpoint_status="failed";
-    if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,pos,script_hash,workflow_name);
+    if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,checkpoint_offset,script_hash,workflow_name);
     if(config.restore_cursor)restore_cursor_origin();
     char buf[160];snprintf(buf,sizeof(buf),"run end: %d step(s), %d failure(s)",executed,failed);log(failed?"warn":"ok",buf);
     if(!config.dry_run)append_outcome_record(executed,failed,checkpoint_status,workflow_name);
