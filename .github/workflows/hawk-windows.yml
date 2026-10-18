@@ -53,3 +53,9 @@ jobs:
         run: |
           cd hawk-os
           python tools/verify_phase_a.py
+
+      - name: Run Phase B workflow regressions
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tools/verify_workflows.py

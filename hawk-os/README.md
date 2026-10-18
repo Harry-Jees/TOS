@@ -35,11 +35,14 @@ Everything below is a real action on the real machine:
 | **Windows** | `focus <title part>`, `waitfocus <title part> [ms]`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
 | **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (file commands are confined to `workspace/`; absolute paths, `~`, and traversal are rejected) |
 | **Flow** | `wait <ms>`, `try <cmd>`, `verifypixel x y RRGGBB [tol]`, `log <text>`, `# comment`, `done` |
+| **Reusable workflows** | `workflow save <name>` (latest generated script), `workflow list`, `workflow run <name>` |
 
 `find` / `findarea` are what make "press the button" possible without knowing
 any coordinates: they scan a fresh screenshot for a colour - `find` for a
 pixel, `findarea` for a whole region (a button, not one pixel of it) - and can
 move/click what they found.
+
+**Reusable workflows.** After a goal produces a script, use `workflow save invoice-check` to save it under `workspace/workflows/`, `workflow list` to browse saved recipes, and a standalone `workflow run invoice-check` line to execute one. Workflow names are restricted to safe slugs; files are size-bounded, nesting is capped, and the normal per-action approval policy still applies when expanded commands execute. Saving is an explicit approved action and does not overwrite an existing workflow. Review generated steps before saving; workflow storage is not a sandbox.
 
 **Prefer semantic UI Automation when available.** Hawk now exposes the selected target app's accessible control names and can use native Windows control patterns to invoke buttons, set editable values, toggle checkboxes, select items, expand/collapse trees, or focus controls. Use the exact accessible name shown by `look` or the goal planner. Ambiguous names and unsupported patterns fail rather than choosing an arbitrary control; vision-grounded mouse/keyboard actions remain the fallback for custom-drawn or inaccessible apps. Semantic actions force a fresh visual verification before the plan continues.
 

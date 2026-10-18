@@ -229,6 +229,7 @@ public:
 private:
     std::vector<LogLine> history_;
     std::string last_shot_;
+    std::string last_script_;  // most recent model/planner script, for workflow promotion
     bool stop_ = false;
 
     // The screenshot the model last saw, and how its pixel space maps onto the
