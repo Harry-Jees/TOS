@@ -26,7 +26,7 @@ fi
 
 SRC=(src/util.cpp src/image.cpp src/capture.cpp src/input.cpp src/winctl.cpp \
      src/agent.cpp src/uia.cpp src/ui.cpp src/main.cpp)
-LIBS=(-luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32)
+LIBS=(-luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32 -luuid)
 
 mkdir -p build
 if [ "$USING_ZIG" -eq 1 ]; then
