@@ -653,7 +653,7 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TextOutW(dc, 20, 18, L"Model settings", 14);
             SelectObject(dc, g_ui->f_ui);
             SetTextColor(dc, C_MUTED);
-            const wchar_t* l1 = L"API key (NVIDIA, OpenAI, OpenRouter, local - stored in hawk.ini)";
+            const wchar_t* l1 = L"API key (encrypted with Windows DPAPI for this Windows user)";
             const wchar_t* l2 = L"Base URL (OpenAI-compatible, .../v1)";
             const wchar_t* l3 = L"Model id - must be able to SEE screenshots (default is NVIDIA's vision model)";
             TextOutW(dc, 20, 40, l1, (int)wcslen(l1));
