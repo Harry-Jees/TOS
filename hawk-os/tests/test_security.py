@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import secrets
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = os.path.join(ROOT, "hawk.exe")
