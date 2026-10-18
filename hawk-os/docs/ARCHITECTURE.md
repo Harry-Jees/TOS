@@ -48,6 +48,12 @@ The model proposes typed actions; it must not directly decide its own permission
 8. **Recoverable workflows.** Persist checkpoints and action outcomes, not just an opaque transcript. Resume only after revalidating the current desktop state.
 9. **Tests are layered.** Unit-test parsing/policy/state transitions offline; mock model/network responses; keep real desktop tests explicitly opt-in and isolated.
 
+## Phase 1 scope
+
+Implemented in this branch: safer execution defaults, workspace-scoped file commands, DPAPI-backed saved credentials, HTTPS enforcement for non-loopback model endpoints, per-action approval for selected high-impact commands, input-result checks, structural JSON decoding, initial UI Automation observations, offline regression scripts, Windows CI configuration, and security/open-source documentation.
+
+Still follow-on work (not implied to be complete by this branch): a fully typed action API replacing the command DSL, comprehensive policy coverage for every possible side effect, cancellable network requests, durable checkpoints/resume, crash recovery, adversarial prompt-injection testing, robust postcondition verification for all action types, signed releases, and a paired Android application. The current protections are defense-in-depth, not an OS sandbox; do not use Hawk as an unattended or unrestricted system administrator.
+
 ## Suggested module boundaries
 
 - `TaskController`: lifecycle, cancellation, checkpoints, retries.
