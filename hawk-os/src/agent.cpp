@@ -27,9 +27,9 @@ static void write_run_checkpoint(const char* status, int attempted_steps, size_t
     FILE* f = fopen(temp.c_str(), "wb");
     if (!f) return;
     fprintf(f,
-            "{\\"schema_version\\":1,\\"status\\":\\"%s\\","
-            "\\"attempted_steps\\":%d,\\"next_script_offset\\":%llu,"
-            "\\"updated_at\\":\\"%04d-%02d-%02dT%02d:%02d:%02d\\"}\\n",
+            "{\"schema_version\":1,\"status\":\"%s\","
+            "\"attempted_steps\":%d,\"next_script_offset\":%llu,"
+            "\"updated_at\":\"%04d-%02d-%02dT%02d:%02d:%02d\"}\n",
             status, attempted_steps, static_cast<unsigned long long>(next_offset),
             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
     const bool closed = fclose(f) == 0;
