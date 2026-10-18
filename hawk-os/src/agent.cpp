@@ -115,6 +115,52 @@ static std::string expand_path(const std::string& raw) {
     return dir + "\\" + p;
 }
 
+// Resolve file commands inside Hawk's workspace only. The model can see
+// screen content and may encounter prompt injection; never let a generated
+// file command silently target arbitrary user-profile or system files.
+static bool workspace_file_path(const std::string& raw, std::string* resolved) {
+    if (raw.empty() || raw[0] == '~' || raw[0] == '/' || raw[0] == '\\\\' ||
+        raw.find(':') != std::string::npos) return false;
+    std::string rel = raw;
+    for (char& c : rel) if (c == '/') c = '\\\\';
+    size_t pos = 0;
+    while (pos <= rel.size()) {
+        size_t end = rel.find('\\\\', pos);
+        std::string part = rel.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        if (part == ".." || part == "." || part.empty()) return false;
+        if (end == std::string::npos) break;
+        pos = end + 1;
+    }
+
+    std::string root = app_dir() + "\\\\workspace";
+    CreateDirectoryA(root.c_str(), nullptr);
+    std::string candidate = root + "\\\\" + rel;
+    char full_root[4096] = {}, full_candidate[4096] = {};
+    if (!GetFullPathNameA(root.c_str(), sizeof(full_root), full_root, nullptr) ||
+        !GetFullPathNameA(candidate.c_str(), sizeof(full_candidate), full_candidate, nullptr))
+        return false;
+    std::string base(full_root), full(full_candidate);
+    while (base.size() > 3 && (base.back() == '\\\\' || base.back() == '/')) base.pop_back();
+    if (full.size() <= base.size() ||
+        _strnicmp(full.c_str(), base.c_str(), base.size()) != 0 ||
+        (full[base.size()] != '\\\\' && full[base.size()] != '/')) return false;
+
+    // Refuse existing reparse-point ancestors (junctions/symlinks) so a
+    // workspace symlink cannot trivially redirect file operations elsewhere.
+    std::string walk = base;
+    size_t at = base.size() + 1;
+    while (at <= full.size()) {
+        size_t end = full.find('\\\\', at);
+        walk += "\\\\" + full.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        DWORD attr = GetFileAttributesA(walk.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    *resolved = full;
+    return true;
+}
+
 static void substitute(std::string& line, const Point& found, bool has_found,
                        const std::string& shot) {
     auto repl = [&line](const std::string& what, const std::string& with) {
@@ -951,7 +997,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
     // ---- files ----
     if (cmd == "write") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "write: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         std::string body = a.size() > 2 ? unescape(rest(2)) : "";
         if (config.dry_run) {
             log("action", "write " + path + " (" + std::to_string(body.size()) + " bytes, dry-run)");
@@ -971,7 +1021,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // Create a file only when it is missing - so "open a text file called
         // X" never clobbers an X that already exists.
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "ensure: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         DWORD attr = GetFileAttributesA(path.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
             log("info", "ensure: " + path + " already exists, leaving it alone");
@@ -995,7 +1049,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
     }
     if (cmd == "read") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "read: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         FILE* f = fopen(path.c_str(), "rb");
         if (!f) {
             log("fail", "read: cannot open " + path);
@@ -1012,7 +1070,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
     }
     if (cmd == "mkdir") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "mkdir: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         if (config.dry_run) {
             log("action", "mkdir " + path + " (dry-run)");
             return true;
@@ -1026,7 +1088,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
     }
     if (cmd == "del" || cmd == "rm" || cmd == "delete") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "del: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         if (config.dry_run) {
             log("action", "del " + path + " (dry-run)");
             return true;
