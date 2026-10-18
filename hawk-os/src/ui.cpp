@@ -193,6 +193,16 @@ static void start_job(const std::string& kind, const std::string& payload) {
         log_append(LogLine{"warn", "a run is already in progress"});
         return;
     }
+    if (kind == "goal" && g_cfg.vision && !g_cfg.api_key.empty()) {
+        int consent = MessageBoxW(
+            g_ui->hwnd,
+            L"Hawk will capture your screen and send the screenshot to the model provider configured in Model settings. Screenshots may contain private information. Continue only if you trust that provider.",
+            L"Screen privacy check", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+        if (consent != IDOK) {
+            log_append(LogLine{"info", "goal cancelled before sending a screenshot"});
+            return;
+        }
+    }
     if (g_worker.joinable()) g_worker.join();
 
     Config cfg;
@@ -618,11 +628,17 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (!key.empty()) g_cfg.api_key = key;
                 if (!url.empty()) g_cfg.base_url = url;
                 if (!model.empty()) g_cfg.model = model;
-                // persist to hawk.ini next to the executable (never logged)
+                // Protect credentials with Windows DPAPI before writing settings.
+                std::string protected_key = protect_secret(g_cfg.api_key);
+                if (!g_cfg.api_key.empty() && protected_key.empty()) {
+                    MessageBoxW(hwnd, L"Windows could not protect the API key. Settings were not saved.",
+                                L"Hawk OS security", MB_OK | MB_ICONERROR);
+                    return 0;
+                }
                 FILE* f = fopen((app_dir() + "\\hawk.ini").c_str(), "w");
                 if (f) {
-                    fprintf(f, "# Hawk OS settings - keep this file to yourself\n");
-                    if (!g_cfg.api_key.empty()) fprintf(f, "api_key=%s\n", g_cfg.api_key.c_str());
+                    fprintf(f, "# Hawk OS settings - API key is DPAPI-protected for this Windows user\n");
+                    if (!protected_key.empty()) fprintf(f, "api_key_dpapi=%s\n", protected_key.c_str());
                     fprintf(f, "base_url=%s\n", g_cfg.base_url.c_str());
                     fprintf(f, "model=%s\n", g_cfg.model.c_str());
                     fprintf(f, "vision=%d\n", g_cfg.vision ? 1 : 0);
