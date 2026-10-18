@@ -570,7 +570,7 @@ bool Agent::run_script(const std::string& source_script) {
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
     log(failed ? "warn" : "ok", buf);
-    record_run_outcome(executed, failed, checkpoint_status);
+    if (!config.dry_run) record_run_outcome(executed, failed, checkpoint_status);
     Point after = cursor_pos();
     if (after.x != cursor_before.x || after.y != cursor_before.y)
         log("info", "cursor moved " + std::to_string(cursor_before.x) + "," +
