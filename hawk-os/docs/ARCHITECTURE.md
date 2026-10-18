@@ -11,7 +11,8 @@ Hawk must be designed around one shared task-execution core so future Android an
 - **Win32 UI**: live screen preview, goal/script inputs, run controls, and activity log.
 - **Agent loop**: screenshot → model plan → command execution → fresh screenshot → verification/correction.
 - **Command runtime**: a small Hawk command language for screenshots, cursor/keyboard/mouse, windows, and workspace files.
-- **Perception**: initial Windows UI Automation (UIA) tree traversal plus local pixel/region detection and model vision. UIA may be incomplete for custom-drawn or protected applications.
+- **Perception**: target-window-aware Windows UI Automation tree traversal plus local pixel/region detection and model vision. UIA may be incomplete for custom-drawn or protected applications.
+- **Semantic actions**: invoke, set value, toggle, select, expand/collapse, and focus through native UIA control patterns. Exact accessible names are preferred; ambiguous matches fail closed and the agent requests fresh visual verification after semantic actions.
 - **Model transport**: WinHTTP requests to an OpenAI-compatible chat-completions endpoint.
 - **Persistence**: local settings, logs, screenshots, and reusable scripts.
 
@@ -77,12 +78,14 @@ Still follow-on work (not implied to be complete by this branch): a fully typed 
 ### Stabilize
 - Finish Windows build and regression validation for the current hardening changes.
 - Replace the legacy response extraction with a maintained JSON parser when dependency policy is decided.
+- Keep semantic UIA actions as the first choice for accessible controls, with screenshot-grounded input as fallback and fresh observation after state-changing actions.
 - Add cancellable WinHTTP requests and bounded response sizes.
 - Add action policy/approval UI and typed postconditions.
 - Add regression tests for path escapes, overwrite attempts, malformed JSON, Unicode, and interrupted actions.
 
 ### Improve desktop capability
-- Harden UI Automation with app-specific tests and semantic control targeting; retain vision/coordinate fallback for unsupported controls.
+- Harden UI Automation with app-specific tests, stronger target-window detection, and safe handling of inaccessible/custom-drawn apps; retain vision/coordinate fallback for unsupported controls.
+- Add additional semantic patterns (scroll, text ranges, grids/tables) only with bounded targets and postcondition verification.
 - Replace direct model-generated command strings with a typed action schema validated by the policy engine.
 - Add per-step plan review, task timeline, durable checkpoints, stop/cancel, and evidence-based result verification.
 - Add browser and application skills only through explicit, permissioned tools.
