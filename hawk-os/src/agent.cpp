@@ -280,18 +280,27 @@ static bool expand_workflow_script(const std::string& input, std::string* output
         const bool had_newline = nl != std::string::npos;
         std::string line = input.substr(pos, had_newline ? nl - pos : std::string::npos);
         const std::vector<std::string> words = split_words(trim(line));
-        if (words.size() >= 3 && to_lower(words[0]) == "workflow" &&
+        if (words.size() >= 2 && to_lower(words[0]) == "workflow" &&
             to_lower(words[1]) == "run") {
+            if (words.size() != 3) {
+                *error = "invalid workflow run syntax; use: workflow run <name>";
+                return false;
+            }
             std::string body, nested;
             if (!read_workflow(words[2], &body, error) ||
                 !expand_workflow_script(body, &nested, depth + 1, error)) return false;
-            if (output->size() + nested.size() > 1024 * 1024) {
+            if (nested.size() > 1024 * 1024 - output->size()) {
                 *error = "expanded workflow exceeds the 1 MiB limit";
                 return false;
             }
             output->append(nested);
-            if (had_newline && (output->empty() || output->back() != '\n'))
+            if (had_newline && (output->empty() || output->back() != '\n')) {
+                if (output->size() >= 1024 * 1024) {
+                    *error = "expanded workflow exceeds the 1 MiB limit";
+                    return false;
+                }
                 output->push_back('\n');
+            }
         } else {
             output->append(line);
             if (had_newline) output->push_back('\n');
