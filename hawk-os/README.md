@@ -185,7 +185,8 @@ Build on Windows with the supported toolchain, then run the two non-interactive 
 
 * **Elevated windows are out of reach.** Windows UIPI stops a normal process
   injecting input into an admin window, and nothing can touch the UAC secure
-  desktop. Run Hawk OS as administrator if you need that (and accept the risk).
+  desktop. Hawk should not be run elevated by default; elevated automation is
+  intentionally outside the normal Phase 1 scope.
 * **Some games ignore synthetic input** because they read raw devices.
 * **The human and the agent share one mouse.** If you move the physical mouse
   mid-run, Windows resynchronises the cursor and the agent's position is gone.
