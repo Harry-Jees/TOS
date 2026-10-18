@@ -214,6 +214,8 @@ public:
     // Execute a small command script (see README). Returns true if every
     // non-optional command succeeded.
     bool run_script(const std::string& script);
+    // Resume a saved workflow only from a verified safe checkpoint.
+    bool resume_workflow(const std::string& name);
     // Read the screen the way a person glances at it: capture it, detect the
     // controls on it, and log a plain-text description. Works with no model.
     bool look();
@@ -231,6 +233,11 @@ private:
     std::string last_shot_;
     std::string last_script_;  // most recent model/planner script, for workflow promotion
     bool stop_ = false;
+    bool resume_requested_ = false;
+    size_t resume_offset_ = 0;
+    int resume_steps_ = 0;
+    uint64_t resume_expected_hash_ = 0;
+    std::string resume_expected_name_;
 
     // The screenshot the model last saw, and how its pixel space maps onto the
     // real desktop. `sclick`/`smove`/`sdrag` take coordinates read straight off
