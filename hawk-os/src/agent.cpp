@@ -1016,13 +1016,22 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("action", "write " + path + " (" + std::to_string(body.size()) + " bytes, dry-run)");
             return true;
         }
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) {
-            log("fail", "write: cannot open " + path);
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            log("fail", "write: cannot create a new file at " + path + " (error " +
+                            std::to_string(GetLastError()) + ")");
             return false;
         }
-        fwrite(body.data(), 1, body.size(), f);
-        fclose(f);
+        DWORD written = 0;
+        BOOL ok = body.empty() || WriteFile(file, body.data(), static_cast<DWORD>(body.size()),
+                                            &written, nullptr);
+        CloseHandle(file);
+        if (!ok || written != body.size()) {
+            DeleteFileA(path.c_str());
+            log("fail", "write: incomplete write to " + path);
+            return false;
+        }
         log("ok", "wrote " + std::to_string(body.size()) + " bytes to " + path);
         return true;
     }
@@ -1046,13 +1055,26 @@ bool Agent::step(const std::string& raw_line, int depth) {
                               " bytes, dry-run)");
             return true;
         }
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) {
-            log("fail", "ensure: cannot open " + path);
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            DWORD error = GetLastError();
+            if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS) {
+                log("info", "ensure: " + path + " already exists, leaving it alone");
+                return true;
+            }
+            log("fail", "ensure: cannot create " + path + " (error " + std::to_string(error) + ")");
             return false;
         }
-        fwrite(body.data(), 1, body.size(), f);
-        fclose(f);
+        DWORD written = 0;
+        BOOL ok = body.empty() || WriteFile(file, body.data(), static_cast<DWORD>(body.size()),
+                                            &written, nullptr);
+        CloseHandle(file);
+        if (!ok || written != body.size()) {
+            DeleteFileA(path.c_str());
+            log("fail", "ensure: incomplete write to " + path);
+            return false;
+        }
         log("ok", "created " + path + " (" + std::to_string(body.size()) + " bytes)");
         return true;
     }
