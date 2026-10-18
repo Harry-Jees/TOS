@@ -257,6 +257,9 @@ private:
     std::vector<std::string> parse_commands(const std::string& reply);
 };
 
+// Browser DOM adapter: talks only to an explicitly enabled localhost CDP endpoint.
+bool browser_command(const std::vector<std::string>& args, bool dry_run, std::string* result, std::string* error);
+
 // ------------------------------------------------------------------- ui -----
 int run_gui(HINSTANCE inst, Config cfg);
 int run_selftest();                    // proves capture + physical input work
