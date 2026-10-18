@@ -3,6 +3,7 @@
 // Start only when ready; stop before entering passwords or other secrets.
 #include "hawk.h"
 #include <atomic>
+#include <chrono>
 #include <cctype>
 #include <condition_variable>
 #include <mutex>
