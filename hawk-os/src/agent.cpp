@@ -1462,6 +1462,10 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
         *err = "no API key set";
         return false;
     }
+    if (!image_b64.empty() && !config.allow_screen_upload) {
+        *err = "screen upload blocked: explicitly approve screenshot sharing for this run";
+        return false;
+    }
     if (!url.secure) {
         const std::string host = to_lower(narrow(url.host));
         const bool loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
