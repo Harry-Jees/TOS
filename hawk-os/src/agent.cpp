@@ -580,7 +580,7 @@ bool Agent::run_script(const std::string& source_script) {
         }
         if(config.step_delay_ms>0)sleep_ms(bounded_ms(config.step_delay_ms,350));
         if(abort_requested()){
-            log("warn","aborted by user during step delay");checkpoint_status="aborted";
+            log("warn","aborted by user during step delay");checkpoint_status="aborted";checkpoint_offset=line_start;
             if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);failed++;break;
         }
         executed++;
