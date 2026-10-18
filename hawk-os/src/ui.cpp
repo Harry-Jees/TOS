@@ -193,6 +193,7 @@ static void start_job(const std::string& kind, const std::string& payload) {
         log_append(LogLine{"warn", "a run is already in progress"});
         return;
     }
+    bool screen_upload_approved = false;
     if (kind == "goal" && g_cfg.vision && !g_cfg.api_key.empty()) {
         int consent = MessageBoxW(
             g_ui->hwnd,
