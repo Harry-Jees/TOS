@@ -37,7 +37,7 @@ def main():
     # Direct scripts need a hard upper bound too; otherwise a script file can
     # run indefinitely even though goal-mode has its own step budget.
     r = run("--dry-run", "--steps", "2", "--run",
-            "log phase-a-one\\nlog phase-a-two\\nlog phase-a-three")
+            "log phase-a-one\nlog phase-a-two\nlog phase-a-three")
     output = r.stdout + r.stderr
     ok = r.returncode != 0 and "command limit reached (2)" in output
     print(f"direct script step budget enforced: {'PASS' if ok else 'FAIL'}")
@@ -45,13 +45,13 @@ def main():
 
     # User/model-supplied waits are capped before execution, including dry-run
     # output, so a typo cannot request an effectively unbounded wait.
-    r = run("--dry-run", "--run", "wait 999999999")
+    r = run("--dry-run", "--run", "wait 99999999")
     output = r.stdout + r.stderr
     ok = r.returncode == 0 and "waiting 30000 ms" in output
     print(f"wait duration is bounded: {'PASS' if ok else 'FAIL'}")
     failures += not ok
 
-    print(f"\\n{3 - failures}/3 Phase A checks passed")
+    print(f"\n{3 - failures}/3 Phase A checks passed")
     return 1 if failures else 0
 
 
