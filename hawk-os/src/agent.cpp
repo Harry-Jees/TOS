@@ -4,6 +4,7 @@
 #include "hawk.h"
 
 #include <shellapi.h>
+#include <algorithm>
 #include <winhttp.h>
 
 #include <cstdio>
@@ -393,7 +394,9 @@ bool Agent::step(const std::string& raw_line, int depth) {
         const std::string target = to_lower(a[2]);
         const char* risky_words[] = {"delete", "remove", "send", "submit", "purchase",
             "pay", "transfer", "publish", "share", "reset", "shutdown", "format",
-            "uninstall", "confirm", "accept", "allow", "install", "sign out", "log out"};
+            "uninstall", "confirm", "accept", "allow", "install", "sign out", "log out",
+            "yes", "ok", "okay", "proceed", "continue", "overwrite", "replace",
+            "execute", "run", "grant", "trust", "enable"};
         if (operation == "invoke" || operation == "click" || operation == "select" ||
             operation == "toggle") {
             for (const char* word : risky_words) {
