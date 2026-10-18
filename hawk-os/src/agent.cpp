@@ -395,14 +395,21 @@ bool Agent::step(const std::string& raw_line, int depth) {
         const char* risky_words[] = {"delete", "remove", "send", "submit", "purchase",
             "pay", "transfer", "publish", "share", "reset", "shutdown", "format",
             "uninstall", "confirm", "accept", "allow", "install", "sign out", "log out",
-            "yes", "ok", "okay", "proceed", "continue", "overwrite", "replace",
-            "execute", "run", "grant", "trust", "enable"};
+            "overwrite", "replace", "execute", "grant", "trust"};
         if (operation == "invoke" || operation == "click" || operation == "select" ||
             operation == "toggle") {
-            for (const char* word : risky_words) {
-                if (target.find(word) != std::string::npos) {
-                    sensitive_reason = "Activate a potentially high-impact UI control: " + a[2];
-                    break;
+            const bool generic_confirmation = target == "yes" || target == "ok" ||
+                target == "okay" || target == "proceed" || target == "continue" ||
+                target == "run" || target == "enable" ||
+                target.find("continue anyway") != std::string::npos;
+            if (generic_confirmation) {
+                sensitive_reason = "Confirm a potentially high-impact UI action: " + a[2];
+            } else {
+                for (const char* word : risky_words) {
+                    if (target.find(word) != std::string::npos) {
+                        sensitive_reason = "Activate a potentially high-impact UI control: " + a[2];
+                        break;
+                    }
                 }
             }
         } else if (operation == "set" &&
