@@ -32,7 +32,7 @@ Everything below is a real action on the real machine:
 | **Aim at a screenshot** | `smove x y`, `sclick [btn] x y`, `sdrag x1 y1 x2 y2` - coordinates read off the last screenshot; Hawk maps them onto the real screen itself |
 | **Type** | `type <text>` (real Unicode keystrokes, `\n` is Enter), `key ctrl+s`, `key alt+f4`, `key enter` |
 | **Windows** | `focus <title part>`, `waitfocus <title part> [ms]`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
-| **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (relative paths land in `workspace/`; `~` starts at your profile folder) |
+| **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (file commands are confined to `workspace/`; absolute paths, `~`, and traversal are rejected) |
 | **Flow** | `wait <ms>`, `try <cmd>`, `verifypixel x y RRGGBB [tol]`, `log <text>`, `# comment`, `done` |
 
 `find` / `findarea` are what make "press the button" possible without knowing
@@ -73,9 +73,11 @@ One dark window, no menus to hunt through:
 * The window publishes its own geometry to `ui-layout.txt`, which is how a test
   (or another Hawk OS run) can click the app's buttons by coordinate.
 
-**Model settings** (the *Model* button) stores an API key, a base URL and a
-model id in `hawk.ini` next to the executable; the key is never printed to the
-log, the screen or the terminal. Any OpenAI-compatible endpoint works — NVIDIA
+**Model settings** (the *Model* button) stores a base URL, model id, and a
+Windows DPAPI-protected API key in `hawk.ini` next to the executable. Legacy
+plaintext keys are still read for migration; saving settings rewrites them in
+protected form. The key is never intentionally printed to the log, screen, or
+terminal. Any OpenAI-compatible endpoint works — NVIDIA
 NIM is the default (`https://integrate.api.nvidia.com/v1`) with a vision model
 that can actually read screenshots (`nvidia/nemotron-3.5-super-vl-120b-a12b`,
 NVIDIA's first-party vision-language model). Or set `HAWK_API_KEY`,
@@ -141,6 +143,17 @@ bolted on:
   lose clicks to Windows' activation-click behaviour.
 * **Dry run** executes the whole script with every action logged instead of
   performed, so you can read what it *would* have done first.
+* **Model execution is opt-in.** Auto-run starts disabled. Review the generated
+  plan before enabling it. The CLI requires `--auto-run` to execute a model
+  plan automatically; `--plan-only` explicitly keeps execution disabled.
+* **Screen sharing is disclosed.** Goal mode asks before sending a screenshot
+  to the configured model provider. Cancel if the screen contains information
+  you do not want to share.
+* **Workspace writes are bounded.** File commands reject absolute/profile paths
+  and traversal, and `write` refuses to overwrite an existing file. Delete
+  it deliberately first if that is genuinely intended.
+* **Typed content is redacted in logs.** The action log records the character
+  count rather than echoing what was typed.
 * **Restore cursor** (on by default) puts the mouse back where it started when
   a run ends.
 * Every action is appended to `hawk.log` with a timestamp, and `--dry-run`
@@ -150,10 +163,10 @@ bolted on:
   `click` reports where the cursor actually was, `find` re-probes the pixel it
   found, and a failed step stops the run instead of ploughing on.
 
-What it does **not** do: it does not ask for elevation, does not install
-anything, does not touch a UAC prompt or the secure desktop (Windows blocks
-synthetic input there), and it does not hide: the window shows what it is
-doing, every time.
+What it does **not** do: it does not ask for elevation, install anything, or
+touch the secure desktop. These controls are defense-in-depth, not a sandbox:
+permitted mouse and keyboard actions can still affect signed-in apps and
+destructive UI controls. Do not run untrusted tasks unattended.
 
 ## 5. How this was verified
 
@@ -248,3 +261,26 @@ hawk-os/
   shots/              captures (git-ignored)
   workspace/          files the agent writes with relative paths
 ```
+
+
+## 6. Open-source development and future direction
+
+Hawk is being developed as an open-source desktop agent, not an operating
+system. The target experience is a coworker-style task workflow: inspectable
+plans, step-by-step progress, approvals for risky actions, recoverable runs,
+and verified outcomes.
+
+- [Architecture and hardening roadmap](docs/ARCHITECTURE.md)
+- [Android voice companion design](docs/MOBILE_COMPANION.md)
+- [Open-source roadmap](OPEN_SOURCE_ROADMAP.md)
+- [Security policy](../SECURITY.md)
+- [Contributing](../CONTRIBUTING.md)
+
+A future Android companion will submit voice instructions and display progress
+on a paired PC. The Windows machine will remain the execution authority; the
+mobile app must not bypass local approval or send provider API keys to the
+phone or relay.
+
+The current build remains a prototype. The updated code has not yet been
+validated by a Windows build in this development session; follow the CI status
+and release notes before relying on it.
