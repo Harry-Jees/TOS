@@ -551,7 +551,7 @@ bool Agent::run_script(const std::string& source_script) {
         if(!f){log("info","task status: no checkpoint exists");return true;}
         fseek(f,0,SEEK_END);long size=ftell(f);rewind(f);
         if(size<=0||size>8192){fclose(f);log("fail","task status: checkpoint is invalid or oversized");return false;}
-        std::string json((size_t)size,'\\0');size_t got=fread(&json[0],1,json.size(),f);fclose(f);
+        std::string json((size_t)size,'\0');size_t got=fread(&json[0],1,json.size(),f);fclose(f);
         if(got!=json.size()){log("fail","task status: checkpoint read failed");return false;}
         const std::string status=checkpoint_string(json,"status"), name=checkpoint_string(json,"workflow_name");
         const unsigned long long pid=checkpoint_number(json,"process_id");
