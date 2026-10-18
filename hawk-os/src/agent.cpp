@@ -344,7 +344,7 @@ bool Agent::run_script(const std::string& script) {
     const int step_limit = config.max_steps > 0 ? config.max_steps : 150;
     const char* checkpoint_status = "running";
     size_t pos = 0;
-    write_run_checkpoint(checkpoint_status, executed, pos);
+    if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
     while (pos <= script.size()) {
         size_t nl = script.find('\n', pos);
         std::string line = script.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
@@ -360,7 +360,7 @@ bool Agent::run_script(const std::string& script) {
         if (abort_requested()) {
             log("warn", "aborted by user (ESC or STOP)");
             checkpoint_status = "aborted";
-            write_run_checkpoint(checkpoint_status, executed, pos);
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
             failed++;
             break;
         }
@@ -368,13 +368,15 @@ bool Agent::run_script(const std::string& script) {
             log("fail", "run stopped: command limit reached (" + std::to_string(step_limit) +
                         "); split the task into smaller scripts");
             checkpoint_status = "limit_reached";
-            write_run_checkpoint(checkpoint_status, executed, pos);
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
             failed++;
             break;
         }
         if (config.step_delay_ms > 0) sleep_ms(bounded_ms(config.step_delay_ms, 350));
         if (abort_requested()) {
             log("warn", "aborted by user during step delay");
+            checkpoint_status = "aborted";
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
             failed++;
             break;
         }
@@ -383,16 +385,16 @@ bool Agent::run_script(const std::string& script) {
             failed++;
             log("fail", "step failed: " + t);
             checkpoint_status = "failed";
-            write_run_checkpoint(checkpoint_status, executed, pos);
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
             if (config.dry_run) continue;
             log("warn", "stopping: a failed step means the state is no longer what the script expects");
             break;
         }
-        write_run_checkpoint("running", executed, pos);
+        if (!config.dry_run) write_run_checkpoint("running", executed, pos);
     }
     if (failed == 0) checkpoint_status = "completed";
     else if (std::string(checkpoint_status) == "running") checkpoint_status = "failed";
-    write_run_checkpoint(checkpoint_status, executed, pos);
+    if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
     if (config.restore_cursor) restore_cursor_origin();
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
