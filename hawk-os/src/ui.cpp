@@ -211,6 +211,7 @@ static void start_job(const std::string& kind, const std::string& payload) {
     cfg.dry_run = g_ui->dry_run;
     cfg.restore_cursor = SendMessageW(g_ui->chk_restore, BM_GETCHECK, 0, 0) == BST_CHECKED;
     cfg.api_key = g_cfg.api_key;
+    cfg.allow_screen_upload = screen_upload_approved;
     cfg.base_url = g_cfg.base_url;
     cfg.model = g_cfg.model;
     cfg.step_delay_ms = g_cfg.step_delay_ms;
