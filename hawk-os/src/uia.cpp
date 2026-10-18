@@ -149,6 +149,7 @@ std::string describe_accessible_controls(HWND hwnd, int max_elements) {
             child->Release();
             child = SUCCEEDED(next_hr) ? next : nullptr;
         }
+        if (child) child->Release(); // release a sibling left by an early traversal stop
     };
     walk(root, 0);
 
@@ -234,6 +235,7 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
             child->Release();
             child = SUCCEEDED(next_hr) ? next : nullptr;
         }
+        if (child) child->Release(); // release a sibling left by an early traversal stop
     };
     walk(root, 0);
 
