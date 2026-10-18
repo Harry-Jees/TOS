@@ -178,6 +178,10 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
         if (result) *result = "control name is empty";
         return false;
     }
+    if (needle.size() > 512 || requested_value.size() > 32768) {
+        if (result) *result = "control name or value exceeds the UI Automation safety limit";
+        return false;
+    }
 
     HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     bool uninitialize = SUCCEEDED(init);
@@ -271,7 +275,12 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
         if (result) *result = narrow(value);
         ok = true;
     } else if (op == "focus") {
-        action_hr = target->SetFocus();
+        // Keyboard input must not be sent to a background app accidentally.
+        if (!focus_window(hwnd)) {
+            action_hr = HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);
+        } else {
+            action_hr = target->SetFocus();
+        }
         ok = SUCCEEDED(action_hr);
     } else if (op == "set") {
         IUnknown* unknown = nullptr;
