@@ -539,7 +539,14 @@ static bool compile_workflow_logic(const std::string& input, std::string* output
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
     log(failed ? "warn" : "ok", buf);
-    if (!config.dry_run) append_outcome_record(executed, failed, checkpoint_status);
+    if (!config.dry_run) {
+        std::string workflow_name;
+        const auto source_words = split_words(trim(source_script));
+        if (source_words.size() == 3 && to_lower(source_words[0]) == "workflow" &&
+            to_lower(source_words[1]) == "run" && valid_workflow_name(source_words[2]))
+            workflow_name = source_words[2];
+        append_outcome_record(executed, failed, checkpoint_status, workflow_name);
+    }
     Point after = cursor_pos();
     if (after.x != cursor_before.x || after.y != cursor_before.y)
         log("info", "cursor moved " + std::to_string(cursor_before.x) + "," +
@@ -2887,10 +2894,10 @@ bool Agent::run_goal(const std::string& goal) {
  }
  if(!stack.empty()){*error="unclosed if block; expected endif";return false;}return true;
 }
-static void append_outcome_record(int steps,int failures,const char* status){
+static void append_outcome_record(int steps,int failures,const char* status,const std::string& workflow){
  const std::string dir=app_dir()+"\\workspace";CreateDirectoryA(dir.c_str(),nullptr);
  HANDLE h=CreateFileA((dir+"\\run-outcomes.jsonl").c_str(),FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(h==INVALID_HANDLE_VALUE)return;
- char row[160];int n=snprintf(row,sizeof(row),"{\"status\":\"%s\",\"steps\":%d,\"failures\":%d}\r\n",status,steps,failures);DWORD written=0;
+ char row[256];int n=snprintf(row,sizeof(row),"{\"status\":\"%s\",\"workflow\":\"%s\",\"steps\":%d,\"failures\":%d}\r\n",status,workflow.c_str(),steps,failures);DWORD written=0;
  if(n>0&&n<(int)sizeof(row))WriteFile(h,row,(DWORD)n,&written,nullptr);CloseHandle(h);
 }
 // ------------------------------------------------------------------- script --
