@@ -91,10 +91,7 @@ std::string describe_accessible_controls(HWND hwnd, int max_elements) {
     if (!hwnd || max_elements <= 0) return "";
     HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     bool uninitialize = SUCCEEDED(init);
-    if (FAILED(init) && init != RPC_E_CHANGED_MODE) {
-        if (result) *result = "COM could not be initialized for Windows UI Automation";
-        return false;
-    }
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return "";
     IUIAutomation* automation = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
                                   IID_PPV_ARGS(&automation));
@@ -189,8 +186,8 @@ std::string describe_accessible_controls(HWND hwnd, int max_elements) {
     return out.str();
 }
 
-// Resolve a control by its accessible Name in the foreground window. Exact
-// matches win; substring matching is allowed only when unique. Ambiguous matches
+// Resolve a control by its accessible Name in the selected external app window.
+// Exact matches win; substring matching is allowed only when unique. Ambiguous matches
 // fail rather than risking an action on the wrong control.
 bool act_accessible_control(HWND hwnd, const std::string& action,
                             const std::string& requested_name,
