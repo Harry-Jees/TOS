@@ -65,7 +65,7 @@ def main():
         failures += not ok
 
         r = run("--dry-run", "--run",
-                f"log PHASE_B_MUST_NOT_RUN\\nworkflow run {names[0]} unexpected")
+                f"log PHASE_B_MUST_NOT_RUN\nworkflow run {names[0]} unexpected")
         output = r.stdout + r.stderr
         ok = (r.returncode != 0
               and "invalid workflow run syntax" in output
@@ -97,7 +97,7 @@ def main():
             except OSError:
                 pass
 
-    print(f"\n{3 - failures}/3 workflow checks passed")
+    print(f"\n{6 - failures}/6 workflow checks passed")
     return 1 if failures else 0
 
 
