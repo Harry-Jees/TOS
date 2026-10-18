@@ -544,6 +544,25 @@ bool Agent::run_script(const std::string& source_script) {
     const auto request_words=split_words(trim(source_script));
     if(request_words.size()==3&&to_lower(request_words[0])=="workflow"&&to_lower(request_words[1])=="resume")
         return resume_workflow(request_words[2]);
+    if(request_words.size()==3&&to_lower(request_words[0])=="task"&&to_lower(request_words[1])=="resume")
+        return resume_workflow(request_words[2]);
+    if(request_words.size()==2&&to_lower(request_words[0])=="task"&&to_lower(request_words[1])=="status"){
+        const std::string path=app_dir()+"\\run-checkpoint.json";FILE* f=fopen(path.c_str(),"rb");
+        if(!f){log("info","task status: no checkpoint exists");return true;}
+        fseek(f,0,SEEK_END);long size=ftell(f);rewind(f);
+        if(size<=0||size>8192){fclose(f);log("fail","task status: checkpoint is invalid or oversized");return false;}
+        std::string json((size_t)size,'\0');size_t got=fread(&json[0],1,json.size(),f);fclose(f);
+        if(got!=json.size()){log("fail","task status: checkpoint read failed");return false;}
+        const std::string status=checkpoint_string(json,"status"), name=checkpoint_string(json,"workflow_name");
+        const unsigned long long pid=checkpoint_number(json,"process_id");
+        bool active=false;if(status=="running"&&pid){HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,(DWORD)pid);if(p){DWORD code=0;active=GetExitCodeProcess(p,&code)&&code==STILL_ACTIVE;CloseHandle(p);}}
+        const bool resumable=!name.empty()&&(status=="aborted"||status=="limit_reached"||(status=="running"&&!active));
+        log("info","task status: "+status+"; workflow="+(name.empty()?std::string("(ad hoc)"):name)+
+            "; attempted_steps="+std::to_string(checkpoint_number(json,"attempted_steps"))+
+            "; offset="+std::to_string(checkpoint_number(json,"next_script_offset"))+
+            "; resume="+(resumable?std::string("candidate (fingerprint will be rechecked)"):std::string("blocked or unavailable")));
+        return true;
+    }
     std::string script, expansion_error;
     if(!expand_workflow_script(source_script,&script,0,&expansion_error)){log("fail","workflow expansion failed: "+expansion_error);return false;}
     if(script!=source_script)log("info","expanded saved workflow reference(s) before execution");

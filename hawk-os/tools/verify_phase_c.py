@@ -48,6 +48,13 @@ def main():
         print(f"checkpoint records a resumable workflow boundary: {'PASS' if ok else 'FAIL'}")
         failures += not ok
 
+        r = run("--run", "task status")
+        output = r.stdout + r.stderr
+        ok = (r.returncode == 0 and "task status: limit_reached" in output
+              and f"workflow={name}" in output and "resume=candidate" in output)
+        print(f"task status exposes safe checkpoint metadata: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(original + "log PHASE_C_TAMPERED\n")
         r = run("--run", f"workflow resume {name}")
@@ -59,7 +66,7 @@ def main():
 
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(original)
-        r = run("--run", f"workflow resume {name}")
+        r = run("--run", f"task resume {name}")
         output = r.stdout + r.stderr
         try:
             with open(checkpoint, "r", encoding="utf-8") as f:
@@ -94,7 +101,7 @@ def main():
             except OSError:
                 pass
 
-    print(f"\n{4 - failures}/4 Phase C checks passed")
+    print(f"\n{5 - failures}/5 Phase C checks passed")
     return 1 if failures else 0
 
 
