@@ -84,7 +84,7 @@ std::string describe_accessible_controls(HWND hwnd, int max_elements) {
             // UIA names originate in arbitrary applications; keep each item on
             // one line so labels cannot forge additional observation records.
             for (char& ch : name)
-                if (ch == '\\r' || ch == '\\n' || ch == '\\t' || ch == '"') ch = ' ';
+                if (ch == '\r' || ch == '\n' || ch == '\t' || ch == '"') ch = ' ';
             if (!offscreen && rect.right > rect.left && rect.bottom > rect.top &&
                 (!name.empty() || type == UIA_ButtonControlTypeId ||
                  type == UIA_EditControlTypeId || type == UIA_CheckBoxControlTypeId ||
