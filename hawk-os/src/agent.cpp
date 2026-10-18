@@ -1507,7 +1507,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (!need(1)) return false;
         const std::string operation = to_lower(a[1]);
         if(operation=="record"){
-            if(a.size()==3&&to_lower(a[2])=="start"){std::string e;if(!start_input_recording(&e)){log("fail","workflow record: "+e);return false;}log("warn","RECORDING ACTIVE: global clicks and key chords are captured locally; do not type passwords or secrets. Run 'workflow record stop <name>' to finish.");return true;}
+            if(a.size()==3&&to_lower(a[2])=="start"){if(config.dry_run){log("fail","workflow recording is unavailable in dry-run mode");return false;}std::string e;if(!start_input_recording(&e)){log("fail","workflow record: "+e);return false;}log("warn","RECORDING ACTIVE: global clicks and key chords are captured locally; do not type passwords or secrets. Run 'workflow record stop <name>' to finish.");return true;}
             if(a.size()==4&&to_lower(a[2])=="stop"){
                 const std::string name=a[3];if(!valid_workflow_name(name)){log("fail","workflow record stop: invalid workflow name");return false;}
                 std::string body,e,path;if(!workflow_file_path(name,&path)){log("fail","workflow record: unsafe workflow path");return false;}
