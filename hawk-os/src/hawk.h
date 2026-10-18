@@ -168,7 +168,7 @@ struct Config {
     int max_rounds = 14;           // LLM plan/verify rounds per goal
     int max_steps = 150;           // total commands a goal may execute
     int segment_size = 6;          // planned commands run between vision checks
-    bool auto_run = true;          // execute scripts the model generates
+    bool auto_run = false;         // require explicit opt-in before executing model-generated scripts
     std::string base_url = "https://integrate.api.nvidia.com/v1";
     std::string api_key;
     // The default must actually be able to *see*: Nemotron 3.5 Super VL is
