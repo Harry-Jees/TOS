@@ -119,42 +119,42 @@ static std::string expand_path(const std::string& raw) {
 // screen content and may encounter prompt injection; never let a generated
 // file command silently target arbitrary user-profile or system files.
 static bool workspace_file_path(const std::string& raw, std::string* resolved) {
-    if (raw.empty() || raw[0] == '~' || raw[0] == '/' || raw[0] == '\\\\' ||
+    if (raw.empty() || raw[0] == '~' || raw[0] == '/' || raw[0] == '\\' ||
         raw.find(':') != std::string::npos) return false;
     std::string rel = raw;
-    for (char& c : rel) if (c == '/') c = '\\\\';
+    for (char& c : rel) if (c == '/') c = '\\';
     size_t pos = 0;
     while (pos <= rel.size()) {
-        size_t end = rel.find('\\\\', pos);
+        size_t end = rel.find('\\', pos);
         std::string part = rel.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
         if (part == ".." || part == "." || part.empty()) return false;
         if (end == std::string::npos) break;
         pos = end + 1;
     }
 
-    std::string root = app_dir() + "\\\\workspace";
+    std::string root = app_dir() + "\\workspace";
     CreateDirectoryA(root.c_str(), nullptr);
-    std::string candidate = root + "\\\\" + rel;
+    std::string candidate = root + "\\" + rel;
     char full_root[4096] = {}, full_candidate[4096] = {};
     DWORD root_len = GetFullPathNameA(root.c_str(), sizeof(full_root), full_root, nullptr);
     DWORD candidate_len = GetFullPathNameA(candidate.c_str(), sizeof(full_candidate), full_candidate, nullptr);
     if (!root_len || root_len >= sizeof(full_root) || !candidate_len ||
         candidate_len >= sizeof(full_candidate)) return false;
     std::string base(full_root), full(full_candidate);
-    while (base.size() > 3 && (base.back() == '\\\\' || base.back() == '/')) base.pop_back();
+    while (base.size() > 3 && (base.back() == '\\' || base.back() == '/')) base.pop_back();
     DWORD root_attr = GetFileAttributesA(base.c_str());
     if (root_attr == INVALID_FILE_ATTRIBUTES || (root_attr & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
     if (full.size() <= base.size() ||
         _strnicmp(full.c_str(), base.c_str(), base.size()) != 0 ||
-        (full[base.size()] != '\\\\' && full[base.size()] != '/')) return false;
+        (full[base.size()] != '\\' && full[base.size()] != '/')) return false;
 
     // Refuse existing reparse-point ancestors (junctions/symlinks) so a
     // workspace symlink cannot trivially redirect file operations elsewhere.
     std::string walk = base;
     size_t at = base.size() + 1;
     while (at <= full.size()) {
-        size_t end = full.find('\\\\', at);
-        walk += "\\\\" + full.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        size_t end = full.find('\\', at);
+        walk += "\\" + full.substr(at, end == std::string::npos ? std::string::npos : end - at);
         DWORD attr = GetFileAttributesA(walk.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
         if (end == std::string::npos) break;
