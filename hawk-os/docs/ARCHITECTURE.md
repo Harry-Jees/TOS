@@ -43,7 +43,7 @@ The model proposes typed actions; it must not directly decide its own permission
 3. **Least privilege.** Do not run elevated by default. Never ask users to disable Windows security controls.
 4. **Observable actions.** Each action has an ID, start/end time, typed result, error details, and optional postcondition. A model claim is not proof of success.
 5. **Human approval for high impact.** File deletion/overwrite, external sends, purchases, credential entry, security settings, and other irreversible actions require approval. Stop must interrupt between actions and cancel in-flight network work.
-6. **Privacy by design.** Tell users what is captured and which provider receives it. Keep screenshots local unless the user consents to a vision request. Redact sensitive regions where feasible.
+6. **Privacy by design.** Tell users what is captured and which provider receives it. The desktop UI asks for consent before a vision goal; CLI users must pass `--allow-screen-upload`. The model client rejects image-bearing requests without that per-run approval. Redact sensitive regions where feasible.
 7. **Provider abstraction.** Model selection, retries, structured outputs, and provider-specific request details live behind one adapter. Secrets never appear in logs or source.
 8. **Recoverable workflows.** Persist checkpoints and action outcomes, not just an opaque transcript. Resume only after revalidating the current desktop state.
 9. **Tests are layered.** Unit-test parsing/policy/state transitions offline; mock model/network responses; keep real desktop tests explicitly opt-in and isolated.
