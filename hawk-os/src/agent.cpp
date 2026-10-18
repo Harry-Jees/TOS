@@ -658,6 +658,8 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (cmd == "uia" && a.size() > 3 && to_lower(a[1]) == "set") {
             details = "uia set \"" + a[2] + "\" [value redacted]";
         }
+        if (cmd == "browser" && a.size() > 3 && to_lower(a[1]) == "fill")
+            details = "browser fill \"" + a[2] + "\" [value redacted]";
         if (details.size() > 220) details.resize(220);
         bool approved = on_approval && on_approval(sensitive_reason, details);
         if (!approved) {
