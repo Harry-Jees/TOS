@@ -3,6 +3,7 @@
 Run after building Hawk on Windows:
     python tools/verify_phase_a.py
 """
+import json
 import os
 import subprocess
 import sys
@@ -51,7 +52,41 @@ def main():
     print(f"wait duration is bounded: {'PASS' if ok else 'FAIL'}")
     failures += not ok
 
-    print(f"\n{3 - failures}/3 Phase A checks passed")
+    # Checkpoints must be atomic, useful after a crash, and free of command
+    # arguments. Preserve any previous manifest so the test does not destroy
+    # the maintainer's diagnostic state.
+    checkpoint = os.path.join(ROOT, "run-checkpoint.json")
+    previous = None
+    if os.path.isfile(checkpoint):
+        with open(checkpoint, "rb") as f:
+            previous = f.read()
+    try:
+        r = run("--run", "log phase-a-checkpoint-probe")
+        try:
+            with open(checkpoint, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            checkpoint_ok = (
+                r.returncode == 0
+                and manifest.get("schema_version") == 1
+                and manifest.get("status") == "completed"
+                and manifest.get("attempted_steps") == 1
+                and "phase-a-checkpoint-probe" not in json.dumps(manifest)
+            )
+        except (OSError, ValueError):
+            checkpoint_ok = False
+        print(f"privacy-safe run checkpoint persisted: {'PASS' if checkpoint_ok else 'FAIL'}")
+        failures += not checkpoint_ok
+    finally:
+        if previous is None:
+            try:
+                os.remove(checkpoint)
+            except FileNotFoundError:
+                pass
+        else:
+            with open(checkpoint, "wb") as f:
+                f.write(previous)
+
+    print(f"\n{4 - failures}/4 Phase A checks passed")
     return 1 if failures else 0
 
 
