@@ -203,6 +203,7 @@ static void start_job(const std::string& kind, const std::string& payload) {
             log_append(LogLine{"info", "goal cancelled before sending a screenshot"});
             return;
         }
+        screen_upload_approved = true;
     }
     if (g_worker.joinable()) g_worker.join();
 
