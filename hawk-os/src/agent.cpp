@@ -1643,6 +1643,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("info", listing);
             return true;
         }
+        if(operation=="resume"){log("fail","workflow resume must be a standalone script command");return false;}
         if(operation=="stats"||operation=="recommend"){
             auto scores=read_workflow_scores();scores.erase(std::remove_if(scores.begin(),scores.end(),[](const WorkflowScore& x){std::string p;return !workflow_file_path(x.name,&p)||GetFileAttributesA(p.c_str())==INVALID_FILE_ATTRIBUTES;}),scores.end());
             if(scores.empty()){log("info","workflow memory: no completed runs recorded yet");return true;}
