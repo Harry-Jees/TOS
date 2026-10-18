@@ -22,7 +22,12 @@ def main():
 
     os.makedirs(WORKFLOWS, exist_ok=True)
     suffix = str(os.getpid())
-    names = [f"phase-b-probe-{suffix}", f"phase-b-cycle-a-{suffix}", f"phase-b-cycle-b-{suffix}"]
+    names = [
+        f"phase-b-probe-{suffix}",
+        f"phase-b-cycle-a-{suffix}",
+        f"phase-b-cycle-b-{suffix}",
+        f"phase-b-large-{suffix}",
+    ]
     paths = [os.path.join(WORKFLOWS, name + ".hawk") for name in names]
     previous = {}
     for path in paths:
@@ -57,6 +62,29 @@ def main():
         output = r.stdout + r.stderr
         ok = r.returncode != 0 and "workflow expansion failed" in output
         print(f"missing workflow fails before execution: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
+        r = run("--dry-run", "--run",
+                f"log PHASE_B_MUST_NOT_RUN\\nworkflow run {names[0]} unexpected")
+        output = r.stdout + r.stderr
+        ok = (r.returncode != 0
+              and "invalid workflow run syntax" in output
+              and "PHASE_B_MUST_NOT_RUN" not in output)
+        print(f"malformed workflow fails before any step: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
+        r = run("--dry-run", "--run", "workflow run ..")
+        output = r.stdout + r.stderr
+        ok = r.returncode != 0 and "workflow expansion failed" in output
+        print(f"path-traversal workflow name is rejected: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
+        with open(paths[3], "wb") as f:
+            f.write(b"#" * (1024 * 1024 + 1))
+        r = run("--dry-run", "--run", f"workflow run {names[3]}")
+        output = r.stdout + r.stderr
+        ok = r.returncode != 0 and "1 MiB size limit" in output
+        print(f"oversized workflow is rejected: {'PASS' if ok else 'FAIL'}")
         failures += not ok
     finally:
         for path in paths:
