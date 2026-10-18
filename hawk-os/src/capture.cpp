@@ -59,6 +59,10 @@ static Image grab(const Rect& r) {
     HDC screen = GetDC(nullptr);
     if (!screen) return img;
     HDC mem = CreateCompatibleDC(screen);
+    if (!mem) {
+        ReleaseDC(nullptr, screen);
+        return img;
+    }
 
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -73,12 +77,14 @@ static Image grab(const Rect& r) {
     if (bmp && bits) {
         HGDIOBJ old = SelectObject(mem, bmp);
         // CAPTUREBLT folds in layered windows so floating panels are included.
-        BitBlt(mem, 0, 0, r.w, r.h, screen, r.x, r.y, SRCCOPY | CAPTUREBLT);
-        GdiFlush();
-        img.w = r.w;
-        img.h = r.h;
-        img.px.assign((uint8_t*)bits, (uint8_t*)bits + (size_t)r.w * r.h * 4);
-        SelectObject(mem, old);
+        BOOL copied = old && old != HGDI_ERROR &&
+                      BitBlt(mem, 0, 0, r.w, r.h, screen, r.x, r.y, SRCCOPY | CAPTUREBLT);
+        if (copied && GdiFlush()) {
+            img.w = r.w;
+            img.h = r.h;
+            img.px.assign((uint8_t*)bits, (uint8_t*)bits + (size_t)r.w * r.h * 4);
+        }
+        if (old && old != HGDI_ERROR) SelectObject(mem, old);
     }
     if (bmp) DeleteObject(bmp);
     DeleteDC(mem);
@@ -114,6 +120,10 @@ Image capture_region(const Rect& r) {
     HDC screen = GetDC(nullptr);
     if (!screen) return Image{};
     HDC mem = CreateCompatibleDC(screen);
+    if (!mem) {
+        ReleaseDC(nullptr, screen);
+        return Image{};
+    }
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = clipped.w;
@@ -126,12 +136,15 @@ Image capture_region(const Rect& r) {
     HBITMAP bmp = CreateDIBSection(mem, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
     if (bmp && bits) {
         HGDIOBJ old = SelectObject(mem, bmp);
-        BitBlt(mem, 0, 0, clipped.w, clipped.h, screen, clipped.x, clipped.y, SRCCOPY | CAPTUREBLT);
-        GdiFlush();
-        img.w = clipped.w;
-        img.h = clipped.h;
-        img.px.assign((uint8_t*)bits, (uint8_t*)bits + (size_t)clipped.w * clipped.h * 4);
-        SelectObject(mem, old);
+        BOOL copied = old && old != HGDI_ERROR &&
+                      BitBlt(mem, 0, 0, clipped.w, clipped.h, screen, clipped.x, clipped.y,
+                             SRCCOPY | CAPTUREBLT);
+        if (copied && GdiFlush()) {
+            img.w = clipped.w;
+            img.h = clipped.h;
+            img.px.assign((uint8_t*)bits, (uint8_t*)bits + (size_t)clipped.w * clipped.h * 4);
+        }
+        if (old && old != HGDI_ERROR) SelectObject(mem, old);
     }
     if (bmp) DeleteObject(bmp);
     DeleteDC(mem);
@@ -154,6 +167,10 @@ Image capture_window(HWND hwnd) {
     HDC screen = GetDC(nullptr);
     if (!screen) return Image{};
     HDC mem = CreateCompatibleDC(screen);
+    if (!mem) {
+        ReleaseDC(nullptr, screen);
+        return Image{};
+    }
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = w;
@@ -167,13 +184,16 @@ Image capture_window(HWND hwnd) {
     if (bmp && bits) {
         HGDIOBJ old = SelectObject(mem, bmp);
         // PrintWindow renders the window even when it is covered or offscreen.
-        BOOL ok = PrintWindow(hwnd, mem, 2 /*PW_RENDERFULLCONTENT*/);
-        if (!ok) BitBlt(mem, 0, 0, w, h, screen, rc.left, rc.top, SRCCOPY | CAPTUREBLT);
-        GdiFlush();
-        img.w = w;
-        img.h = h;
-        img.px.assign((uint8_t*)bits, (uint8_t*)bits + (size_t)w * h * 4);
-        SelectObject(mem, old);
+        BOOL copied = old && old != HGDI_ERROR &&
+                      PrintWindow(hwnd, mem, 2 /*PW_RENDERFULLCONTENT*/);
+        if (!copied && old && old != HGDI_ERROR)
+            copied = BitBlt(mem, 0, 0, w, h, screen, rc.left, rc.top, SRCCOPY | CAPTUREBLT);
+        if (copied && GdiFlush()) {
+            img.w = w;
+            img.h = h;
+            img.px.assign((uint8_t*)bits, (uint8_t*)bits + (size_t)w * h * 4);
+        }
+        if (old && old != HGDI_ERROR) SelectObject(mem, old);
     }
     if (bmp) DeleteObject(bmp);
     DeleteDC(mem);
