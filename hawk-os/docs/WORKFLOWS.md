@@ -18,25 +18,6 @@ Workflows are stored under `workspace/workflows/<name>.hawk`. Names allow 1–48
 - Workflow save directives are stripped from the saved recipe to avoid a workflow trying to save itself again.
 - Workflows are ordinary local scripts, not a sandbox. Review them before saving or running. A recipe can still operate on the signed-in desktop within Hawk's existing permissions.
 
-## Variables and branching
+## Current limitations
 
-Workflows also support bounded compile-time variables and equality branches:
-
-```text
-set target "Notepad"
-if target == Notepad
-  open notepad
-else
-  log target did not match
-endif
-```
-
-Use `$name` to substitute a variable into a command. Values are limited to 4096 bytes, at most 64 variables and 16 nested conditional blocks are allowed. Conditions are literal equality checks, not a general-purpose expression evaluator. The compiler validates the whole structure before any desktop action runs.
-
-## Outcome records
-
-Non-dry-run script executions append only aggregate status, step count, and failure count to `workspace/run-outcomes.jsonl`. The journal intentionally excludes prompts, typed text, screenshots, window titles, and file contents. It provides a local signal for later opt-in learning; it does not autonomously change the planner or train a model.
-
-## Remaining limitations
-
-Raw mouse/keyboard demonstration recording and a live browser DOM/CDP automation engine are not implemented in this change. Browser automation requires a dedicated, opt-in debugging connection and permission model; do not enable Chrome remote debugging on untrusted networks. These should not be represented as complete until implemented and tested end-to-end.
+This phase promotes generated scripts into reusable recipes; it does not yet record raw mouse/keyboard demonstrations, provide variables or conditional branches, learn from task outcomes, or automate websites through a DOM/CDP browser driver. Browser automation and stronger variable-aware workflow compilation remain future Phase B work.
