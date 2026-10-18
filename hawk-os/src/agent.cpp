@@ -385,6 +385,21 @@ bool Agent::step(const std::string& raw_line, int depth) {
         sensitive_reason = "Delete a file from Hawk's workspace";
     } else if (cmd == "close") {
         sensitive_reason = "Close a running application/window";
+    } else if (cmd == "uia" && a.size() > 2) {
+        const std::string operation = to_lower(a[1]);
+        const std::string target = to_lower(a[2]);
+        const char* risky_words[] = {"delete", "remove", "send", "submit", "purchase",
+            "pay", "transfer", "publish", "share", "reset", "shutdown", "format",
+            "uninstall", "confirm", "accept", "allow", "install", "sign out", "log out"};
+        if (operation == "invoke" || operation == "click" || operation == "select" ||
+            operation == "toggle") {
+            for (const char* word : risky_words) {
+                if (target.find(word) != std::string::npos) {
+                    sensitive_reason = "Activate a potentially high-impact UI control: " + a[2];
+                    break;
+                }
+            }
+        }
     } else if (cmd == "open") {
         std::string target = to_lower(trim(rest(1)));
         static const char* safe_apps[] = {"notepad", "calc", "mspaint", "explorer",
@@ -411,6 +426,39 @@ bool Agent::step(const std::string& raw_line, int depth) {
             return false;
         }
         log("info", "sensitive action approved for this step: " + sensitive_reason);
+    }
+
+    // Semantic UI Automation targets named controls in the foreground app and
+    // uses the control's native pattern before resorting to screen coordinates.
+    if (cmd == "uia") {
+        if (!need(2)) return false;
+        const std::string operation = to_lower(a[1]);
+        static const char* supported[] = {"invoke", "click", "set", "toggle", "select",
+                                          "expand", "collapse", "focus", "read"};
+        bool known_action = false;
+        for (const char* name : supported) if (operation == name) known_action = true;
+        if (!known_action) {
+            log("fail", "uia: unsupported action; use invoke, set, toggle, select, expand, collapse, focus or read");
+            return false;
+        }
+        if (operation == "set" && !need(3)) return false;
+        const std::string target_name = a[2];
+        const std::string value = operation == "set" ? rest(3) : "";
+        if (config.dry_run) {
+            log("action", "uia " + operation + " control \"" + target_name + "\" (dry-run)");
+            return true;
+        }
+        std::string result;
+        if (!act_accessible_control(GetForegroundWindow(), operation, target_name, value, &result)) {
+            log("fail", "uia " + operation + " \"" + target_name + "\": " + result);
+            return false;
+        }
+        // UIA read values may contain personal data; do not copy them into logs.
+        if (operation == "read")
+            log("ok", "uia read control \"" + target_name + "\" (value withheld from logs)");
+        else
+            log("ok", "uia " + operation + " control \"" + target_name + "\": " + result);
+        return true;
     }
 
     // ---- seeing ----
@@ -1622,7 +1670,7 @@ std::vector<std::string> Agent::parse_commands(const std::string& reply) {
                                      "clickel", "move", "click", "drag", "scroll", "type", "key",
                                      "focus", "open", "close", "wait", "waitclose", "waitfocus",
                                      "sleep", "pixel", "find", "findarea", "verifypixel", "smove",
-                                     "sclick", "sdrag", "windows", "cursor", "monitors", "write",
+                                     "sclick", "sdrag", "uia", "windows", "cursor", "monitors", "write",
                                      "read", "mkdir", "ensure", "del", "rm", "delete", "log", "note",
                                      "echo", "try", "done"};
         bool known = false;
@@ -1660,6 +1708,10 @@ static std::string command_reference() {
         "look                             read the screen: detect controls, report them\n"
         "elements [x y w h]               list the controls detected (in a region)\n"
         "clickel <rank> [right|double]    click the Nth detected control\n"
+        "uia invoke|click <name>          activate a uniquely named Windows control\n"
+        "uia set <name> <value>           set a control's accessible value\n"
+        "uia toggle|select|expand|collapse|focus <name>\n"
+        "                                 prefer semantic controls over guessed coordinates\n"
         "move x y | move rel dx dy        move the real cursor\n"
         "click [left|right|double|triple] [x y]   real click (optionally after moving)\n"
         "drag x1 y1 x2 y2                 press, move, release\n"
@@ -2228,7 +2280,11 @@ bool Agent::run_goal(const std::string& goal) {
              "- To re-read the screen yourself, use `look` (Hawk analyses the screenshot and "
              "reports the controls it detects) or `elements`.\n"
              "- Prefer the visible controls listed in the analysis below; they were detected "
-             "from this very screenshot, not invented.\n";
+             "from this very screenshot, not invented.\n"
+             "- If the Windows accessibility list names the intended control, prefer semantic "
+             "UIA actions such as uia invoke \"Exact control name\" or uia set \"Field name\" \"value\" "
+             "over coordinate clicks. Use only accessible names actually listed. If a name is "
+             "ambiguous or the action pattern is unavailable, fall back to screenshot-grounded coordinates.\n";
         return s;
     };
 
