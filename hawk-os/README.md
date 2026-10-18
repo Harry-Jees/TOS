@@ -135,7 +135,9 @@ prints normally.
 Input injection is a sharp tool, so the guards are built in rather than
 bolted on:
 
-* **STOP** button aborts the run between steps, instantly.
+* **STOP** aborts between actions. An in-flight model request has bounded
+  WinHTTP timeouts and may take up to 30 seconds to return before the worker
+  can fully stop.
 * **Ctrl+Alt+H** is a global hotkey that aborts even if the window is not
   focused. **Holding ESC** aborts too — checked before every action.
 * A click that lands on a background window brings it to the front first —
