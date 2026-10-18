@@ -55,7 +55,7 @@ def scenario(name, goal, script_replies, want_files):
         if os.path.exists(p):
             os.remove(p)
     r = subprocess.run(
-        [EXE, "--base-url", f"http://127.0.0.1:{PORT}/v1", "--key", "mock", "--auto-run",
+        [EXE, "--base-url", f"http://127.0.0.1:{PORT}/v1", "--key", "mock", "--allow-screen-upload", "--auto-run",
          "--delay", "100", "--steps", "20", "--goal", goal],
         capture_output=True, text=True, timeout=180, errors="replace")
     out = r.stdout + r.stderr
