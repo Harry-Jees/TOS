@@ -8,6 +8,7 @@
 #include <winhttp.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -505,7 +506,7 @@ static std::string checkpoint_string(const std::string& json,const char* key) {
 }
 static unsigned long long checkpoint_number(const std::string& json,const char* key) {
     std::string marker="\""+std::string(key)+"\"";size_t p=json.find(marker);if(p==std::string::npos)return 0;
-    p=json.find(':',p+marker.size());if(p==std::string::npos)return 0;return _strtoui64(json.c_str()+p+1,nullptr,10);
+    p=json.find(':',p+marker.size());if(p==std::string::npos)return 0;return strtoull(json.c_str()+p+1,nullptr,10);
 }
 bool Agent::resume_workflow(const std::string& name) {
     if(config.dry_run){log("fail","workflow resume is unavailable in dry-run mode");return false;}
@@ -527,7 +528,7 @@ bool Agent::resume_workflow(const std::string& name) {
         DWORD pid=(DWORD)checkpoint_number(json,"process_id");
         if(pid){HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(process){DWORD code=0;bool alive=GetExitCodeProcess(process,&code)&&code==STILL_ACTIVE;CloseHandle(process);if(alive){log("fail","workflow resume: recorded task process is still active");return false;}}}
     }
-    char* end=nullptr;unsigned long long parsed=_strtoui64(hash_text.c_str(),&end,16);
+    char* end=nullptr;unsigned long long parsed=strtoull(hash_text.c_str(),&end,16);
     if(!end||*end!='\0'){log("fail","workflow resume: invalid script fingerprint");return false;}
     resume_expected_hash_=static_cast<uint64_t>(parsed);resume_expected_name_=name;
     resume_offset_=static_cast<size_t>(checkpoint_number(json,"next_script_offset"));
@@ -1655,7 +1656,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("fail", "workflow run must be a standalone script line so it can be expanded before execution");
             return false;
         }
-        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow record start|stop <name> | workflow stats | workflow recommend | workflow run <name>");
+        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow record start|stop <name> | workflow stats | workflow recommend | workflow run <name> | workflow resume <name>");
         return false;
     }
 
