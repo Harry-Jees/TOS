@@ -2025,6 +2025,10 @@ bool Agent::run_goal(const std::string& goal) {
             for (const std::string& c : local) log("agent", "planned: " + c);
             std::string script = join_commands(local);
             publish_script(script);
+            if (!config.auto_run) {
+                log("warn", "auto-run is off; the local plan was saved for review and nothing was executed");
+                return false;
+            }
             return run_script(script);
         }
         // A goal that is already a script still works verbatim.
