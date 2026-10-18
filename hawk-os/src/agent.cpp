@@ -593,6 +593,8 @@ bool Agent::step(const std::string& raw_line, int depth) {
                     target.find("credit card") != std::string::npos)) {
             sensitive_reason = "Enter a credential or payment value into a UI control";
         }
+    } else if (cmd == "workflow" && a.size() > 1 && to_lower(a[1]) == "save") {
+        sensitive_reason = "Save a reusable workflow that may contain text inputs; review its script before approval";
     } else if (cmd == "open") {
         std::string target = to_lower(trim(rest(1)));
         static const char* safe_apps[] = {"notepad", "calc", "mspaint", "explorer",
@@ -1436,6 +1438,108 @@ bool Agent::step(const std::string& raw_line, int depth) {
             return true;  // removing what is already gone is still success
         }
         log("fail", "del: could not delete " + path + " (error " + std::to_string(e) + ")");
+        return false;
+    }
+
+    // ---- reusable workflows ----
+    if (cmd == "workflow") {
+        if (!need(1)) return false;
+        const std::string operation = to_lower(a[1]);
+        if (operation == "save") {
+            if (!need(2)) return false;
+            const std::string name = a[2];
+            if (!valid_workflow_name(name)) {
+                log("fail", "workflow save: use a 1-48 character name with letters, digits, '-' or '_'");
+                return false;
+            }
+            if (last_script_.empty()) {
+                log("fail", "workflow save: no generated script is available yet; run a goal first");
+                return false;
+            }
+            if (last_script_.size() > 1024 * 1024) {
+                log("fail", "workflow save: script exceeds the 1 MiB limit");
+                return false;
+            }
+            std::string path;
+            if (!workflow_file_path(name, &path)) {
+                log("fail", "workflow save: workspace path is unsafe");
+                return false;
+            }
+            // Avoid embedding a workflow-save directive into the saved recipe.
+            // That would make a replay attempt to save the same file again.
+            std::string body;
+            size_t pos = 0;
+            while (pos < last_script_.size()) {
+                size_t nl = last_script_.find('\n', pos);
+                const bool had_newline = nl != std::string::npos;
+                std::string line = last_script_.substr(
+                    pos, had_newline ? nl - pos : std::string::npos);
+                const std::vector<std::string> words = split_words(trim(line));
+                const bool save_directive = words.size() >= 2 &&
+                    to_lower(words[0]) == "workflow" && to_lower(words[1]) == "save";
+                if (!save_directive) {
+                    body += line;
+                    if (had_newline) body.push_back('\n');
+                }
+                pos = had_newline ? nl + 1 : last_script_.size();
+            }
+            if (body.empty()) {
+                log("fail", "workflow save: the generated script has no reusable commands");
+                return false;
+            }
+            HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                      FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file == INVALID_HANDLE_VALUE) {
+                log("fail", "workflow save: a workflow with that name already exists or cannot be created");
+                return false;
+            }
+            DWORD written = 0;
+            const BOOL ok = WriteFile(file, body.data(), static_cast<DWORD>(body.size()),
+                                      &written, nullptr);
+            CloseHandle(file);
+            if (!ok || written != body.size()) {
+                DeleteFileA(path.c_str());
+                log("fail", "workflow save: incomplete write; partial file removed");
+                return false;
+            }
+            log("ok", "saved reusable workflow '" + name + "' (" +
+                      std::to_string(body.size()) + " bytes)");
+            return true;
+        }
+        if (operation == "list") {
+            const std::string directory = app_dir() + "\\workspace\\workflows";
+            CreateDirectoryA((app_dir() + "\\workspace").c_str(), nullptr);
+            CreateDirectoryA(directory.c_str(), nullptr);
+            DWORD attr = GetFileAttributesA(directory.c_str());
+            if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                log("fail", "workflow list: unsafe workflow directory");
+                return false;
+            }
+            WIN32_FIND_DATAA data{};
+            HANDLE find = FindFirstFileA((directory + "\\*.hawk").c_str(), &data);
+            std::string listing = "saved workflows:";
+            int count = 0;
+            if (find != INVALID_HANDLE_VALUE) {
+                do {
+                    if (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
+                        continue;
+                    std::string filename = data.cFileName;
+                    if (filename.size() > 5 && to_lower(filename.substr(filename.size() - 5)) == ".hawk") {
+                        listing += "\n  " + filename.substr(0, filename.size() - 5);
+                        count++;
+                    }
+                } while (FindNextFileA(find, &data));
+                FindClose(find);
+            }
+            if (!count) listing += "\n  (none yet)";
+            log("info", listing);
+            return true;
+        }
+        if (operation == "run") {
+            log("fail", "workflow run must be a standalone script line so it can be expanded before execution");
+            return false;
+        }
+        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow run <name>");
         return false;
     }
 
