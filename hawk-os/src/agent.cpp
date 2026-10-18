@@ -318,6 +318,7 @@ static void substitute(std::string& line, const Point& found, bool has_found,
 // so "the agent wrote a script and ran it" leaves something you can re-run.
 void Agent::publish_script(const std::string& script) {
     if (script.empty()) return;
+    if (script.size() <= 1024 * 1024) last_script_ = script;
     if (on_script) on_script(script);
     SYSTEMTIME st;
     GetLocalTime(&st);
