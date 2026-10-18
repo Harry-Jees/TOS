@@ -1989,7 +1989,7 @@ std::vector<std::string> Agent::parse_commands(const std::string& reply) {
                                      "sleep", "pixel", "find", "findarea", "verifypixel", "smove",
                                      "sclick", "sdrag", "uia", "windows", "cursor", "monitors", "write",
                                      "read", "mkdir", "ensure", "del", "rm", "delete", "log", "note",
-                                     "echo", "try", "done"};
+                                     "echo", "try", "workflow", "done"};
         bool known = false;
         for (const char* v : verbs)
             if (c == v) known = true;
@@ -2055,6 +2055,9 @@ static std::string command_reference() {
         "write <path> <text> | mkdir <path>   create files/directories\n"
         "ensure <path> [text]                create a file only if missing\n"
         "del <path>                          delete a file (~ = your profile folder)\n"
+        "workflow save <name>               save the latest generated script as a reusable workflow\n"
+        "workflow list                      list saved workflows\n"
+        "workflow run <name>                expand and execute a saved workflow\n"
         "log <text>                       write a note into the run log\n"
         "done                             finish (say this when the goal is met)\n";
 }
