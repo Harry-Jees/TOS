@@ -29,7 +29,7 @@ Everything below is a real action on the real machine:
 | --- | --- |
 | **See** | `shot`, `shotwin <title>`, `region x y w h`, `look`, `elements [x y w h]`, `windows`, `monitors`, `cursor`, `pixel x y` |
 | **Touch** | `move x y`, `move rel dx dy`, `click [left\|right\|double] [x y]`, `clickel <rank> [right\|double]`, `drag x1 y1 x2 y2`, `scroll <notches>` |
-| **Semantic controls** | `uia invoke "Save"`, `uia set "File name" "notes.txt"`, `uia toggle "Remember me"`, `uia select "Downloads"`, `uia expand "This PC"`, `uia focus "Search"` |
+| **Semantic controls** | `uia invoke "Save"`, `uia set "File name" "notes.txt"`, `uia toggle "Remember me"`, `uia select "Downloads"`, `uia expand "This PC"`, `uia focus "Search"`, `uia wait "Save" 5000` |
 | **Aim at a screenshot** | `smove x y`, `sclick [btn] x y`, `sdrag x1 y1 x2 y2` - coordinates read off the last screenshot; Hawk maps them onto the real screen itself |
 | **Type** | `type <text>` (real Unicode keystrokes, `\n` is Enter), `key ctrl+s`, `key alt+f4`, `key enter` |
 | **Windows** | `focus <title part>`, `waitfocus <title part> [ms]`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
