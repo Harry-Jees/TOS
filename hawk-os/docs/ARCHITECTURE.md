@@ -9,7 +9,7 @@ Hawk is a Windows desktop AI agent, not an operating system. The goal is a depen
 - **Win32 UI**: live screen preview, goal/script inputs, run controls, and activity log.
 - **Agent loop**: screenshot → model plan → command execution → fresh screenshot → verification/correction.
 - **Command runtime**: a small Hawk command language for screenshots, cursor/keyboard/mouse, windows, and workspace files.
-- **Perception**: local pixel/region detection plus model vision.
+- **Perception**: initial Windows UI Automation (UIA) tree traversal plus local pixel/region detection and model vision. UIA may be incomplete for custom-drawn or protected applications.
 - **Model transport**: WinHTTP requests to an OpenAI-compatible chat-completions endpoint.
 - **Persistence**: local settings, logs, screenshots, and reusable scripts.
 
@@ -69,7 +69,7 @@ The model proposes typed actions; it must not directly decide its own permission
 - Add regression tests for path escapes, overwrite attempts, malformed JSON, Unicode, and interrupted actions.
 
 ### Improve capability
-- Add UI Automation (UIA) for named controls, labels, roles, and accessible state; keep vision as fallback.
+- Harden the initial UI Automation integration with app-specific tests, control targeting, and safe handling of inaccessible/custom-drawn apps; keep vision as fallback.
 - Split the monolithic agent file into the modules above.
 - Add task timeline, plan review/editing, per-step approval, checkpoints, and run history.
 - Add browser and application skills only through explicit, permissioned tools.
