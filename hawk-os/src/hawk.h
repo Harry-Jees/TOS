@@ -167,6 +167,7 @@ struct WinInfo {
 
 std::vector<WinInfo> list_windows(size_t limit = 200);
 HWND find_window(const std::string& needle);              // by title substring
+HWND active_target_window();                              // foreground app, excluding Hawk itself
 std::wstring window_title(HWND hwnd);
 bool focus_window(HWND hwnd);
 std::string describe_windows(size_t limit);
