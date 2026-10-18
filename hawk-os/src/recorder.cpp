@@ -20,6 +20,7 @@ HHOOK g_mouse=nullptr,g_keyboard=nullptr;
 std::atomic<bool> g_active{false};
 bool g_ready_flag=false,g_setup_ok=false;
 std::string g_setup_error;
+POINT g_left_down{}; bool g_left_pending=false;
 
 void add_event(const std::string& event) {
     std::lock_guard<std::mutex> guard(g_lock);
@@ -44,9 +45,14 @@ std::string key_name(DWORD vk) {
 LRESULT CALLBACK mouse_hook(int code,WPARAM wp,LPARAM lp) {
     if(code==HC_ACTION&&g_active.load()) {
         const auto* m=reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
-        const char* button=nullptr;
-        if(wp==WM_LBUTTONDOWN)button="left";else if(wp==WM_RBUTTONDOWN)button="right";else if(wp==WM_MBUTTONDOWN)button="middle";
-        if(button)add_event("click "+std::to_string(m->pt.x)+" "+std::to_string(m->pt.y)+" "+button);
+        if(wp==WM_LBUTTONDOWN){g_left_down=m->pt;g_left_pending=true;}
+        else if(wp==WM_LBUTTONUP&&g_left_pending){
+            g_left_pending=false;
+            if(abs(m->pt.x-g_left_down.x)>4||abs(m->pt.y-g_left_down.y)>4)
+                add_event("drag "+std::to_string(g_left_down.x)+" "+std::to_string(g_left_down.y)+" "+std::to_string(m->pt.x)+" "+std::to_string(m->pt.y));
+            else add_event("click "+std::to_string(m->pt.x)+" "+std::to_string(m->pt.y)+" left");
+        } else if(wp==WM_RBUTTONDOWN)add_event("click "+std::to_string(m->pt.x)+" "+std::to_string(m->pt.y)+" right");
+        else if(wp==WM_MBUTTONDOWN)add_event("click "+std::to_string(m->pt.x)+" "+std::to_string(m->pt.y)+" middle");
     }
     return CallNextHookEx(g_mouse,code,wp,lp);
 }
