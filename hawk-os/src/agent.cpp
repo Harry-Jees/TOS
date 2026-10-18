@@ -2330,7 +2330,7 @@ bool Agent::run_goal(const std::string& goal) {
              "UIA actions such as uia invoke \"Exact control name\" or uia set \"Field name\" \"value\" "
              "over coordinate clicks. Use only accessible names actually listed. If a name is "
              "ambiguous or the action pattern is unavailable, fall back to screenshot-grounded coordinates. "
-             "Use `uia wait \\\"Control name\\\"` to wait for dialogs or dynamic controls before acting.\n";
+             "Use `uia wait \"Control name\"` to wait for dialogs or dynamic controls before acting.\n";
         return s;
     };
 
