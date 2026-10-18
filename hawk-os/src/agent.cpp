@@ -19,24 +19,19 @@ static std::string log_path() { return app_dir() + "\\hawk.log"; }
 // Crash-diagnostic checkpoint: deliberately records progress metadata only,
 // never command arguments, typed text, screenshots, credentials, or file data.
 // Replace the manifest atomically so a crash cannot leave half-written JSON.
-static void write_run_checkpoint(const char* status, int attempted_steps, size_t next_offset) {
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    const std::string path = app_dir() + "\\run-checkpoint.json";
-    const std::string temp = path + ".tmp";
-    FILE* f = fopen(temp.c_str(), "wb");
-    if (!f) return;
-    fprintf(f,
-            "{\"schema_version\":1,\"status\":\"%s\","
-            "\"attempted_steps\":%d,\"next_script_offset\":%llu,"
-            "\"updated_at\":\"%04d-%02d-%02dT%02d:%02d:%02d\"}\n",
-            status, attempted_steps, static_cast<unsigned long long>(next_offset),
-            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    const bool closed = fclose(f) == 0;
-    if (!closed || !MoveFileExA(temp.c_str(), path.c_str(),
-                                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileA(temp.c_str());
-    }
+static void write_run_checkpoint(const char* status, int attempted_steps, size_t next_offset,
+                                   uint64_t script_hash, const std::string& workflow_name) {
+    SYSTEMTIME st; GetLocalTime(&st);
+    char hash[17]; snprintf(hash,sizeof(hash),"%016llx",static_cast<unsigned long long>(script_hash));
+    const std::string path=app_dir()+"\\run-checkpoint.json", temp=path+".tmp";
+    FILE* f=fopen(temp.c_str(),"wb"); if(!f)return;
+    fprintf(f,"{\"schema_version\":1,\"status\":\"%s\",\"attempted_steps\":%d,\"next_script_offset\":%llu,"
+              "\"script_hash\":\"%s\",\"workflow_name\":\"%s\",\"process_id\":%lu,"
+              "\"updated_at\":\"%04d-%02d-%02dT%02d:%02d:%02d\"}\n",
+            status,attempted_steps,static_cast<unsigned long long>(next_offset),hash,workflow_name.c_str(),
+            static_cast<unsigned long>(GetCurrentProcessId()),st.wYear,st.wMonth,st.wDay,st.wHour,st.wMinute,st.wSecond);
+    const bool closed=fclose(f)==0;
+    if(!closed||!MoveFileExA(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))DeleteFileA(temp.c_str());
 }
 
 void Agent::log(const std::string& level, const std::string& text) {
@@ -487,90 +482,124 @@ static std::vector<WorkflowScore> read_workflow_scores() {
  }fclose(f);return scores;
 }
 // ------------------------------------------------------------------- script --
-bool Agent::run_script(const std::string& source_script) {
-    std::string script;
-    std::string expansion_error;
-    if (!expand_workflow_script(source_script, &script, 0, &expansion_error)) {
-        log("fail", "workflow expansion failed: " + expansion_error);
-        return false;
+static uint64_t task_script_hash(const std::string& script) {
+    uint64_t h=1469598103934665603ULL;
+    for(unsigned char c:script){h^=c;h*=1099511628211ULL;}
+    return h;
+}
+static std::string workflow_name_from_script(const std::string& source) {
+    size_t pos=0;
+    while(pos<source.size()){
+        size_t nl=source.find('\n',pos);
+        std::string line=source.substr(pos,nl==std::string::npos?std::string::npos:nl-pos);
+        auto words=split_words(trim(line));
+        if(words.size()==3&&to_lower(words[0])=="workflow"&&to_lower(words[1])=="run"&&valid_workflow_name(words[2]))return words[2];
+        if(nl==std::string::npos)break;pos=nl+1;
     }
-    if (script != source_script)
-        log("info", "expanded saved workflow reference(s) before execution");
-    std::string compiled_script, compile_error;
-    if (!compile_workflow_logic(script, &compiled_script, &compile_error)) { log("fail", "workflow compilation failed before execution: " + compile_error); return false; }
+    return {};
+}
+static std::string checkpoint_string(const std::string& json,const char* key) {
+    std::string marker="\""+std::string(key)+"\"";size_t p=json.find(marker);if(p==std::string::npos)return {};
+    p=json.find(':',p+marker.size());if(p==std::string::npos)return {};p=json.find('"',p+1);if(p==std::string::npos)return {};
+    size_t e=json.find('"',p+1);if(e==std::string::npos)return {};return json.substr(p+1,e-p-1);
+}
+static unsigned long long checkpoint_number(const std::string& json,const char* key) {
+    std::string marker="\""+std::string(key)+"\"";size_t p=json.find(marker);if(p==std::string::npos)return 0;
+    p=json.find(':',p+marker.size());if(p==std::string::npos)return 0;return _strtoui64(json.c_str()+p+1,nullptr,10);
+}
+bool Agent::resume_workflow(const std::string& name) {
+    if(config.dry_run){log("fail","workflow resume is unavailable in dry-run mode");return false;}
+    if(!valid_workflow_name(name)){log("fail","workflow resume: invalid workflow name");return false;}
+    const std::string path=app_dir()+"\\run-checkpoint.json";
+    FILE* f=fopen(path.c_str(),"rb");if(!f){log("fail","workflow resume: no checkpoint exists");return false;}
+    fseek(f,0,SEEK_END);long size=ftell(f);rewind(f);
+    if(size<=0||size>8192){fclose(f);log("fail","workflow resume: checkpoint is invalid or oversized");return false;}
+    std::string json((size_t)size,'\0');size_t got=fread(&json[0],1,json.size(),f);fclose(f);
+    if(got!=json.size()){log("fail","workflow resume: checkpoint read failed");return false;}
+    const std::string status=checkpoint_string(json,"status");
+    const std::string saved_name=checkpoint_string(json,"workflow_name");
+    const std::string hash_text=checkpoint_string(json,"script_hash");
+    if(saved_name!=name||hash_text.empty()){log("fail","workflow resume: checkpoint belongs to a different or non-reusable task");return false;}
+    if(status!="running"&&status!="aborted"&&status!="limit_reached"){
+        log("fail","workflow resume: checkpoint status '"+status+"' is not safe to resume; an action may have partially executed");return false;
+    }
+    if(status=="running"){
+        DWORD pid=(DWORD)checkpoint_number(json,"process_id");
+        if(pid){HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(process){DWORD code=0;bool alive=GetExitCodeProcess(process,&code)&&code==STILL_ACTIVE;CloseHandle(process);if(alive){log("fail","workflow resume: recorded task process is still active");return false;}}}
+    }
+    char* end=nullptr;unsigned long long parsed=_strtoui64(hash_text.c_str(),&end,16);
+    if(!end||*end!='\0'){log("fail","workflow resume: invalid script fingerprint");return false;}
+    resume_expected_hash_=static_cast<uint64_t>(parsed);resume_expected_name_=name;
+    resume_offset_=static_cast<size_t>(checkpoint_number(json,"next_script_offset"));
+    resume_steps_=static_cast<int>(checkpoint_number(json,"attempted_steps"));
+    resume_requested_=true;
+    log("info","resuming workflow '"+name+"' from checkpoint after "+std::to_string(resume_steps_)+" attempted step(s)");
+    bool ok=run_script("workflow run "+name);
+    if(resume_requested_){resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();}
+    return ok;
+}
+
+bool Agent::run_script(const std::string& source_script) {
+    const auto request_words=split_words(trim(source_script));
+    if(request_words.size()==3&&to_lower(request_words[0])=="workflow"&&to_lower(request_words[1])=="resume")
+        return resume_workflow(request_words[2]);
+    std::string script, expansion_error;
+    if(!expand_workflow_script(source_script,&script,0,&expansion_error)){log("fail","workflow expansion failed: "+expansion_error);return false;}
+    if(script!=source_script)log("info","expanded saved workflow reference(s) before execution");
+    std::string compiled_script,compile_error;
+    if(!compile_workflow_logic(script,&compiled_script,&compile_error)){log("fail","workflow compilation failed before execution: "+compile_error);return false;}
     script.swap(compiled_script);
-    Point cursor_before = cursor_pos();
-    if (config.restore_cursor) save_cursor_origin();
-    request_abort(false);
-    stop_ = false;
-
-    log("info", "run start: " + std::to_string(split_words(script).size()) + " token(s) of input");
-    int executed = 0, failed = 0;
-    const int step_limit = config.max_steps > 0 ? config.max_steps : 150;
-    const char* checkpoint_status = "running";
-    size_t pos = 0;
-    if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
-    while (pos <= script.size()) {
-        size_t nl = script.find('\n', pos);
-        std::string line = script.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
-        if (nl == std::string::npos) pos = script.size() + 1;
-        else pos = nl + 1;
-
-        std::string t = trim(line);
-        if (t.empty() || t[0] == '#') continue;
-        if (t == "done") {
-            log("ok", "script signalled done");
-            break;
+    const uint64_t script_hash=task_script_hash(script);
+    const std::string workflow_name=workflow_name_from_script(source_script);
+    Point cursor_before=cursor_pos();if(config.restore_cursor)save_cursor_origin();
+    request_abort(false);stop_=false;
+    int executed=0,failed=0;const int step_limit=config.max_steps>0?config.max_steps:150;
+    size_t pos=0;const char* checkpoint_status="running";
+    if(resume_requested_){
+        if(workflow_name!=resume_expected_name_||script_hash!=resume_expected_hash_){resume_requested_=false;log("fail","workflow resume: saved workflow changed since checkpoint; refusing stale replay");return false;}
+        if(resume_offset_>script.size()||(resume_offset_>0&&script[resume_offset_-1]!='\n')){resume_requested_=false;log("fail","workflow resume: checkpoint offset is not a valid line boundary");return false;}
+        pos=resume_offset_;executed=resume_steps_;resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();
+    }
+    log("info","run start: "+std::to_string(split_words(script).size())+" token(s) of input");
+    if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,pos,script_hash,workflow_name);
+    while(pos<=script.size()){
+        const size_t line_start=pos;size_t nl=script.find('\n',pos);
+        std::string line=script.substr(pos,nl==std::string::npos?std::string::npos:nl-pos);
+        if(nl==std::string::npos)pos=script.size()+1;else pos=nl+1;
+        std::string t=trim(line);if(t.empty()||t[0]=='#')continue;
+        if(t=="done"){log("ok","script signalled done");break;}
+        if(abort_requested()){
+            log("warn","aborted by user (ESC or STOP)");checkpoint_status="aborted";
+            if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);
+            failed++;break;
         }
-        if (abort_requested()) {
-            log("warn", "aborted by user (ESC or STOP)");
-            checkpoint_status = "aborted";
-            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
-            failed++;
-            break;
+        if(executed>=step_limit){
+            log("fail","run stopped: command limit reached ("+std::to_string(step_limit)+"); split the task into smaller scripts");
+            checkpoint_status="limit_reached";if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);failed++;break;
         }
-        if (executed >= step_limit) {
-            log("fail", "run stopped: command limit reached (" + std::to_string(step_limit) +
-                        "); split the task into smaller scripts");
-            checkpoint_status = "limit_reached";
-            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
-            failed++;
-            break;
-        }
-        if (config.step_delay_ms > 0) sleep_ms(bounded_ms(config.step_delay_ms, 350));
-        if (abort_requested()) {
-            log("warn", "aborted by user during step delay");
-            checkpoint_status = "aborted";
-            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
-            failed++;
-            break;
+        if(config.step_delay_ms>0)sleep_ms(bounded_ms(config.step_delay_ms,350));
+        if(abort_requested()){
+            log("warn","aborted by user during step delay");checkpoint_status="aborted";
+            if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);failed++;break;
         }
         executed++;
-        if (!step(t, 0)) {
-            failed++;
-            log("fail", "step failed: " + t);
-            checkpoint_status = "failed";
-            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
-            if (config.dry_run) continue;
-            log("warn", "stopping: a failed step means the state is no longer what the script expects");
-            break;
+        if(!config.dry_run)write_run_checkpoint("step_in_progress",executed,line_start,script_hash,workflow_name);
+        if(!step(t,0)){
+            failed++;log("fail","step failed: "+t);checkpoint_status="failed";
+            if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,line_start,script_hash,workflow_name);
+            if(config.dry_run)continue;
+            log("warn","stopping: a failed step means the state is no longer what the script expects");break;
         }
-        if (!config.dry_run) write_run_checkpoint("running", executed, pos);
+        if(!config.dry_run)write_run_checkpoint("running",executed,pos,script_hash,workflow_name);
     }
-    if (failed == 0) checkpoint_status = "completed";
-    else if (std::string(checkpoint_status) == "running") checkpoint_status = "failed";
-    if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
-    if (config.restore_cursor) restore_cursor_origin();
-    char buf[160];
-    snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
-    log(failed ? "warn" : "ok", buf);
-    if (!config.dry_run) { std::string workflow_name;size_t scan=0;while(scan<source_script.size()){size_t nl=source_script.find('\n',scan);std::string line=source_script.substr(scan,nl==std::string::npos?std::string::npos:nl-scan);auto words=split_words(trim(line));if(words.size()==3&&to_lower(words[0])=="workflow"&&to_lower(words[1])=="run"&&valid_workflow_name(words[2])){workflow_name=words[2];break;}if(nl==std::string::npos)break;scan=nl+1;}append_outcome_record(executed,failed,checkpoint_status,workflow_name); }
-    Point after = cursor_pos();
-    if (after.x != cursor_before.x || after.y != cursor_before.y)
-        log("info", "cursor moved " + std::to_string(cursor_before.x) + "," +
-                        std::to_string(cursor_before.y) + " -> " + std::to_string(after.x) + "," +
-                        std::to_string(after.y));
-    return failed == 0;
+    if(failed==0)checkpoint_status="completed";else if(std::string(checkpoint_status)=="running")checkpoint_status="failed";
+    if(!config.dry_run)write_run_checkpoint(checkpoint_status,executed,pos,script_hash,workflow_name);
+    if(config.restore_cursor)restore_cursor_origin();
+    char buf[160];snprintf(buf,sizeof(buf),"run end: %d step(s), %d failure(s)",executed,failed);log(failed?"warn":"ok",buf);
+    if(!config.dry_run)append_outcome_record(executed,failed,checkpoint_status,workflow_name);
+    Point after=cursor_pos();
+    if(after.x!=cursor_before.x||after.y!=cursor_before.y)log("info","cursor moved "+std::to_string(cursor_before.x)+","+std::to_string(cursor_before.y)+" -> "+std::to_string(after.x)+","+std::to_string(after.y));
+    return failed==0;
 }
 
 // One command. The language is deliberately tiny and explicit.
