@@ -47,3 +47,9 @@ jobs:
         run: |
           cd hawk-os
           python tools/verify_goal_loop.py
+
+      - name: Run Phase A execution safety regressions
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tools/verify_phase_a.py
