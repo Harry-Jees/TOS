@@ -587,6 +587,10 @@ bool Agent::step(const std::string& raw_line, int depth) {
         sensitive_reason = "Delete a file from Hawk's workspace";
     } else if (cmd == "close") {
         sensitive_reason = "Close a running application/window";
+    } else if (cmd == "browser" && a.size() > 1) {
+        const std::string op = to_lower(a[1]);
+        if (op == "click" || op == "fill" || op == "navigate")
+            sensitive_reason = "Interact with a live browser page via local DevTools: " + op;
     } else if (cmd == "uia" && a.size() > 2) {
         const std::string operation = to_lower(a[1]);
         const std::string target = to_lower(a[2]);
@@ -1466,6 +1470,17 @@ bool Agent::step(const std::string& raw_line, int depth) {
         }
         log("fail", "del: could not delete " + path + " (error " + std::to_string(e) + ")");
         return false;
+    }
+
+    // ---- local browser DOM adapter ----
+    if (cmd == "browser") {
+        std::string result, browser_error;
+        if (!browser_command(a, config.dry_run, &result, &browser_error)) {
+            log("fail", "browser: " + browser_error);
+            return false;
+        }
+        log("ok", "browser: " + result);
+        return true;
     }
 
     // ---- reusable workflows ----
