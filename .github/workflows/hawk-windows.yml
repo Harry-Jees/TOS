@@ -36,6 +36,12 @@ jobs:
           cd hawk-os
           bash build.sh
 
+      - name: Run non-interactive safety regressions
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tests/test_security.py
+
       - name: Run offline goal-loop regression scenarios
         shell: msys2 {0}
         run: |
