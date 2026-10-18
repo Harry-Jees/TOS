@@ -457,6 +457,7 @@ int run_cli(int argc, char** argv) {
         } else if (a == "--dry-run") cfg.dry_run = true;
         else if (a == "--auto-run") cfg.auto_run = true;
         else if (a == "--allow-sensitive") cfg.allow_sensitive_actions = true;
+        else if (a == "--allow-screen-upload") cfg.allow_screen_upload = true;
         else if (a == "--no-restore") cfg.restore_cursor = false;
         else if (a == "--no-vision") cfg.vision = false;
         else if (a == "--plan-only") cfg.auto_run = false;
