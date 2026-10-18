@@ -23,7 +23,13 @@ static void read_ini(Config* cfg) {
         if (eq == std::string::npos) continue;
         std::string k = to_lower(trim(s.substr(0, eq)));
         std::string v = trim(s.substr(eq + 1));
-        if (k == "api_key") cfg->api_key = v;
+        if (k == "api_key_dpapi") {
+            cfg->api_key = unprotect_secret(v);
+        } else if (k == "api_key") {
+            // Legacy compatibility: old versions wrote plaintext keys. The UI
+            // rewrites this as DPAPI-protected on the next settings save.
+            cfg->api_key = v;
+        }
         else if (k == "base_url") cfg->base_url = v;
         else if (k == "model") cfg->model = v;
         else if (k == "vision") cfg->vision = (v != "0");
