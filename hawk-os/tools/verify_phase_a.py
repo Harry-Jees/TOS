@@ -61,6 +61,10 @@ def main():
         with open(checkpoint, "rb") as f:
             previous = f.read()
     try:
+        # Remove the prior manifest temporarily so a stale checkpoint cannot
+        # make this assertion pass if the current run fails to write one.
+        if previous is not None:
+            os.remove(checkpoint)
         r = run("--run", "log phase-a-checkpoint-probe")
         try:
             with open(checkpoint, "r", encoding="utf-8") as f:
