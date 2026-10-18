@@ -93,9 +93,24 @@ def main():
         "write a file called mock-d.txt",
         ["write mock-d.txt from a plan that ends in done\ndone"],
         ["mock-d.txt"]))
+    results.append(scenario(
+        "Unicode escapes are decoded from model JSON",
+        "create a unicode test file",
+        ["write mock-unicode.txt café 🦅", "done"],
+        ["mock-unicode.txt"]))
+    unicode_path = os.path.join(ROOT, "workspace", "mock-unicode.txt")
+    try:
+        with open(unicode_path, "r", encoding="utf-8") as f:
+            unicode_ok = f.read() == "café 🦅"
+    except (OSError, UnicodeError):
+        unicode_ok = False
+    print(f"Unicode file contents preserved: {'PASS' if unicode_ok else 'FAIL'}")
+    results.append(unicode_ok)
+    if os.path.exists(unicode_path):
+        os.remove(unicode_path)
     server.shutdown()
     passed = sum(results)
-    print(f"\n{passed}/{len(results)} scenarios passed")
+    print(f"\n{passed}/{len(results)} checks passed")
     return 0 if passed == len(results) else 1
 
 
