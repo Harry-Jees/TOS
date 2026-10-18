@@ -56,7 +56,7 @@ The model proposes typed actions; it must not directly decide its own permission
 
 ## Phase 1 scope
 
-Implemented in this branch: safer execution defaults, workspace-scoped file commands, DPAPI-backed saved credentials, HTTPS enforcement for non-loopback model endpoints, per-action approval for selected high-impact commands, input-result checks, structural JSON decoding, initial UI Automation observations, offline regression scripts, Windows CI configuration, and security/open-source documentation.
+Implemented in this branch: safer execution defaults, workspace-scoped file commands, DPAPI-backed saved credentials, HTTPS enforcement for non-loopback model endpoints, per-action approval for selected high-impact commands, input-result checks, structural JSON decoding, initial UI Automation observations, offline regression scripts, Windows CI configuration, and security/open-source documentation. Phase A additionally bounds direct-script command counts and wait durations, redacts dry-run typed content, and adds isolated goal-loop and execution-safety regression coverage. See [PHASE_A.md](PHASE_A.md) for acceptance criteria.
 
 Still follow-on work (not implied to be complete by this branch): a fully typed action API replacing the command DSL, comprehensive policy coverage for every possible side effect, cancellable network requests, durable checkpoints/resume, crash recovery, adversarial prompt-injection testing, robust postcondition verification for all action types, signed releases, and paired remote clients. The current protections are defense-in-depth, not an OS sandbox; do not use Hawk as an unattended or unrestricted system administrator.
 
