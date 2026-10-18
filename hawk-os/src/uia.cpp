@@ -207,14 +207,15 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
 
     IUIAutomationElement* exact = nullptr;
     IUIAutomationElement* partial = nullptr;
+    int exact_count = 0;
     int partial_count = 0;
     int visited = 0;
     std::function<void(IUIAutomationElement*, int)> walk;
     walk = [&](IUIAutomationElement* parent, int depth) {
-        if (!parent || exact || depth > 12 || visited >= 2500) return;
+        if (!parent || depth > 12 || visited >= 2500) return;
         IUIAutomationElement* child = nullptr;
         if (FAILED(walker->GetFirstChildElement(parent, &child)) || !child) return;
-        while (child && !exact && visited < 2500) {
+        while (child && visited < 2500) {
             ++visited;
             BOOL enabled = TRUE, offscreen = FALSE;
             child->get_CurrentIsEnabled(&enabled);
@@ -222,8 +223,11 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
             const std::wstring name = lower_wide(element_name(child));
             if (enabled && !offscreen && !name.empty()) {
                 if (name == needle) {
-                    child->AddRef();
-                    exact = child;
+                    ++exact_count;
+                    if (!exact) {
+                        child->AddRef();
+                        exact = child;
+                    }
                 } else if (name.find(needle) != std::wstring::npos) {
                     ++partial_count;
                     if (!partial) {
@@ -232,7 +236,7 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
                     }
                 }
             }
-            if (!exact && depth < 12 && visited < 2500) walk(child, depth + 1);
+            if (depth < 12 && visited < 2500) walk(child, depth + 1);
             IUIAutomationElement* next = nullptr;
             HRESULT next_hr = walker->GetNextSiblingElement(child, &next);
             child->Release();
@@ -242,13 +246,16 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
     };
     walk(root, 0);
 
-    IUIAutomationElement* target = exact;
-    if (!target && partial_count == 1) {
+    IUIAutomationElement* target = nullptr;
+    if (exact_count == 1) {
+        target = exact;
+        exact = nullptr;
+    } else if (exact_count == 0 && partial_count == 1) {
         target = partial;
         partial = nullptr;
     }
     // Keep the selected element's AddRef alive until the action has completed.
-    if (exact && target != exact) exact->Release();
+    if (exact) exact->Release();
     if (partial) partial->Release();
     walker->Release();
     root->Release();
@@ -257,7 +264,7 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
     if (!target) {
         if (uninitialize) CoUninitialize();
         if (result) {
-            if (partial_count > 1)
+            if (exact_count > 1 || partial_count > 1)
                 *result = "control name is ambiguous; use a more specific accessible name";
             else
                 *result = "no enabled, visible control matched the requested name";
