@@ -13,7 +13,7 @@ Phase C adds safe recovery for reusable workflow runs without treating a checkpo
 ## Use
 
 1. Run a saved workflow normally: `workflow run <name>`.
-2. If it reaches the configured step limit or is stopped before a command begins, run `workflow resume <name>`.
+2. Inspect progress with `task status`. If the workflow reaches the configured step limit or is stopped before a command begins, run `workflow resume <name>` (or `task resume <name>`).
 3. Review the screen and workflow after any failure. A partially executed action is never replayed automatically.
 
 The resume command continues at the next safe boundary, not at an arbitrary instruction pointer. It is deliberately unavailable in dry-run mode and cannot resume a plain ad-hoc script.
