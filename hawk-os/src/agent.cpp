@@ -552,12 +552,12 @@ bool Agent::run_script(const std::string& source_script) {
     script.swap(compiled_script);
     const uint64_t script_hash=task_script_hash(script);
     const std::string workflow_name=workflow_name_from_script(source_script);
-    int executed=0,failed=0;const int step_limit=config.max_steps>0?config.max_steps:150;
+    int executed=0,failed=0;int step_limit=config.max_steps>0?config.max_steps:150;
     size_t pos=0;const char* checkpoint_status="running";
     if(resume_requested_){
         if(workflow_name!=resume_expected_name_||script_hash!=resume_expected_hash_){resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();log("fail","workflow resume: saved workflow changed since checkpoint; refusing stale replay");return false;}
         if(resume_offset_>script.size()||(resume_offset_>0&&script[resume_offset_-1]!='\n')){resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();log("fail","workflow resume: checkpoint offset is not a valid line boundary");return false;}
-        pos=resume_offset_;executed=resume_steps_;resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();
+        pos=resume_offset_;executed=resume_steps_;step_limit+=resume_steps_;resume_requested_=false;resume_offset_=0;resume_steps_=0;resume_expected_hash_=0;resume_expected_name_.clear();
     }
     Point cursor_before=cursor_pos();if(config.restore_cursor)save_cursor_origin();
     request_abort(false);stop_=false;
