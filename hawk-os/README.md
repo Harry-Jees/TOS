@@ -29,6 +29,7 @@ Everything below is a real action on the real machine:
 | --- | --- |
 | **See** | `shot`, `shotwin <title>`, `region x y w h`, `look`, `elements [x y w h]`, `windows`, `monitors`, `cursor`, `pixel x y` |
 | **Touch** | `move x y`, `move rel dx dy`, `click [left\|right\|double] [x y]`, `clickel <rank> [right\|double]`, `drag x1 y1 x2 y2`, `scroll <notches>` |
+| **Semantic controls** | `uia invoke "Save"`, `uia set "File name" "notes.txt"`, `uia toggle "Remember me"`, `uia select "Downloads"`, `uia expand "This PC"`, `uia focus "Search"` |
 | **Aim at a screenshot** | `smove x y`, `sclick [btn] x y`, `sdrag x1 y1 x2 y2` - coordinates read off the last screenshot; Hawk maps them onto the real screen itself |
 | **Type** | `type <text>` (real Unicode keystrokes, `\n` is Enter), `key ctrl+s`, `key alt+f4`, `key enter` |
 | **Windows** | `focus <title part>`, `waitfocus <title part> [ms]`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
@@ -39,6 +40,8 @@ Everything below is a real action on the real machine:
 any coordinates: they scan a fresh screenshot for a colour - `find` for a
 pixel, `findarea` for a whole region (a button, not one pixel of it) - and can
 move/click what they found.
+
+**Prefer semantic UI Automation when available.** Hawk now exposes the foreground desktop app's accessible control names and can use native Windows control patterns to invoke buttons, set editable values, toggle checkboxes, select items, expand/collapse trees, or focus controls. Use the exact accessible name shown by `look` or the goal planner. Ambiguous names and unsupported patterns fail rather than choosing an arbitrary control; vision-grounded mouse/keyboard actions remain the fallback for custom-drawn or inaccessible apps. Semantic actions force a fresh visual verification before the plan continues.
 
 **Scripts can see.** `look` captures the screen, detects the controls on it
 (buttons, fields, panels) entirely locally - no model involved - and logs a
