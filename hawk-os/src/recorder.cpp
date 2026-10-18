@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cctype>
 #include <condition_variable>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 
