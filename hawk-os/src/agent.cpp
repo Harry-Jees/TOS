@@ -439,7 +439,15 @@ bool Agent::look() {
 }
 
 // ------------------------------------------------------------------- script --
-bool Agent::run_script(const std::string& script) {
+bool Agent::run_script(const std::string& source_script) {
+    std::string script;
+    std::string expansion_error;
+    if (!expand_workflow_script(source_script, &script, 0, &expansion_error)) {
+        log("fail", "workflow expansion failed: " + expansion_error);
+        return false;
+    }
+    if (script != source_script)
+        log("info", "expanded saved workflow reference(s) before execution");
     Point cursor_before = cursor_pos();
     if (config.restore_cursor) save_cursor_origin();
     request_abort(false);
