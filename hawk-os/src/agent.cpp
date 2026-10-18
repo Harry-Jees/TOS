@@ -287,6 +287,8 @@ bool Agent::look() {
                   std::to_string(els.size()) + " control(s) detected" +
                   (last_shot_.empty() ? "" : (", screenshot " + last_shot_)));
     log("info", visual_report(img));
+    std::string accessible = describe_accessible_controls(GetForegroundWindow(), 40);
+    if (!accessible.empty()) log("info", "Windows accessibility controls:\n" + accessible);
     if (!els.empty())
         log("info", "click the top control with: click " +
                         std::to_string(els[0].rect.x + els[0].rect.w / 2) + " " +
@@ -2082,6 +2084,8 @@ bool Agent::run_goal(const std::string& goal) {
         Rect v = virtual_desktop();
         remember_map(small, v);  // sclick/smove now aim in this screenshot's pixel space
         *analysis = visual_report(small);
+        std::string accessible = describe_accessible_controls(GetForegroundWindow(), 40);
+        if (!accessible.empty()) *analysis += "\nWindows accessibility controls:\n" + accessible;
         shot_w = small.w;
         shot_h = small.h;
         // A labelled grid lets the model read coordinates off the image itself;
