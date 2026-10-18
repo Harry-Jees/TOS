@@ -434,11 +434,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (!need(2)) return false;
         const std::string operation = to_lower(a[1]);
         static const char* supported[] = {"invoke", "click", "set", "toggle", "select",
-                                          "expand", "collapse", "focus", "read"};
+                                          "expand", "collapse", "focus"};
         bool known_action = false;
         for (const char* name : supported) if (operation == name) known_action = true;
         if (!known_action) {
-            log("fail", "uia: unsupported action; use invoke, set, toggle, select, expand, collapse, focus or read");
+            log("fail", "uia: unsupported action; use invoke, set, toggle, select, expand, collapse or focus");
             return false;
         }
         if (operation == "set" && !need(3)) return false;
@@ -453,11 +453,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("fail", "uia " + operation + " \"" + target_name + "\": " + result);
             return false;
         }
-        // UIA read values may contain personal data; do not copy them into logs.
-        if (operation == "read")
-            log("ok", "uia read control \"" + target_name + "\" (value withheld from logs)");
-        else
-            log("ok", "uia " + operation + " control \"" + target_name + "\": " + result);
+        log("ok", "uia " + operation + " control \"" + target_name + "\": " + result);
         return true;
     }
 
@@ -2458,6 +2454,13 @@ bool Agent::run_goal(const std::string& goal) {
                 force_check = true;
                 log("warn", "a plan step failed - asking the model what to do next instead of "
                             "ploughing on");
+                break;
+            }
+            // Semantic actions change control state directly. Re-observe and ask
+            // the model to verify before continuing with the next planned action.
+            if (to_lower(trim(c)).rfind("uia ", 0) == 0) {
+                force_check = true;
+                log("info", "semantic action complete; verifying the resulting desktop state");
                 break;
             }
         }
