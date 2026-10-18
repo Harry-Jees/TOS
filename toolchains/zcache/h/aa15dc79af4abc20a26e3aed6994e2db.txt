@@ -1,2 +1,0 @@
-0
-8391 281474977410371 1792179181444779900 958bd3fbe9914e3cbf8afd7dc61f31ef 1 libc\mingw\lib-common\api-ms-win-crt-math-l1-1-0.def.in
