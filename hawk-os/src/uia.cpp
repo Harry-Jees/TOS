@@ -325,7 +325,18 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
                     IUIAutomationTogglePattern* pattern = nullptr;
                     action_hr = unknown->QueryInterface(IID_PPV_ARGS(&pattern));
                     if (SUCCEEDED(action_hr) && pattern) {
+                        ToggleState before = ToggleState_Indeterminate;
+                        HRESULT before_hr = pattern->get_CurrentToggleState(&before);
                         action_hr = pattern->Toggle();
+                        if (SUCCEEDED(action_hr) && SUCCEEDED(before_hr)) {
+                            Sleep(60);
+                            ToggleState after = before;
+                            HRESULT verify_hr = pattern->get_CurrentToggleState(&after);
+                            if (SUCCEEDED(verify_hr) && after == before) {
+                                action_hr = E_FAIL;
+                                if (result) *result = "toggle returned success, but the control state did not change";
+                            }
+                        }
                         pattern->Release();
                     }
                 } else if (pattern_id == UIA_SelectionItemPatternId) {
@@ -333,6 +344,15 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
                     action_hr = unknown->QueryInterface(IID_PPV_ARGS(&pattern));
                     if (SUCCEEDED(action_hr) && pattern) {
                         action_hr = pattern->Select();
+                        if (SUCCEEDED(action_hr)) {
+                            Sleep(60);
+                            BOOL selected = FALSE;
+                            HRESULT verify_hr = pattern->get_CurrentIsSelected(&selected);
+                            if (SUCCEEDED(verify_hr) && !selected) {
+                                action_hr = E_FAIL;
+                                if (result) *result = "selection returned success, but the item is not selected";
+                            }
+                        }
                         pattern->Release();
                     }
                 } else {
@@ -340,6 +360,20 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
                     action_hr = unknown->QueryInterface(IID_PPV_ARGS(&pattern));
                     if (SUCCEEDED(action_hr) && pattern) {
                         action_hr = (op == "expand") ? pattern->Expand() : pattern->Collapse();
+                        if (SUCCEEDED(action_hr)) {
+                            Sleep(60);
+                            ExpandCollapseState state = ExpandCollapseState_LeafNode;
+                            HRESULT verify_hr = pattern->get_CurrentExpandCollapseState(&state);
+                            const bool correct = SUCCEEDED(verify_hr) &&
+                                ((op == "expand" && (state == ExpandCollapseState_Expanded ||
+                                                      state == ExpandCollapseState_PartiallyExpanded)) ||
+                                 (op == "collapse" && (state == ExpandCollapseState_Collapsed ||
+                                                        state == ExpandCollapseState_LeafNode)));
+                            if (SUCCEEDED(verify_hr) && !correct) {
+                                action_hr = E_FAIL;
+                                if (result) *result = "expand/collapse returned success, but the state did not match";
+                            }
+                        }
                         pattern->Release();
                     }
                 }
