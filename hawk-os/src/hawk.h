@@ -257,6 +257,11 @@ private:
     std::vector<std::string> parse_commands(const std::string& reply);
 };
 
+// Explicitly started global input recorder; captures mouse clicks and key chords locally.
+bool start_input_recording(std::string* error);
+bool stop_input_recording(std::string* script, std::string* error);
+bool input_recording_active();
+
 // Browser DOM adapter: talks only to an explicitly enabled localhost CDP endpoint.
 bool browser_command(const std::vector<std::string>& args, bool dry_run, std::string* result, std::string* error);
 
