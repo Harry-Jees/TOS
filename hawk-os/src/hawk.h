@@ -110,6 +110,12 @@ Image draw_grid(const Image& src, int step);
 std::string describe_elements(const std::vector<UiElement>& els);
 // Semantic accessibility tree for the foreground app; empty when unavailable.
 std::string describe_accessible_controls(HWND hwnd, int max_elements = 40);
+// Act on a uniquely named, visible Windows control through its supported UIA pattern.
+// Actions: invoke/click, set, toggle, select, expand, collapse, focus, read.
+bool act_accessible_control(HWND hwnd, const std::string& action,
+                            const std::string& requested_name,
+                            const std::string& requested_value,
+                            std::string* result);
 
 bool save_png(const Image& img, const std::string& path);
 bool save_bmp(const Image& img, const std::string& path);
