@@ -329,7 +329,14 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
             action_hr = unknown->QueryInterface(IID_PPV_ARGS(&pattern));
             unknown->Release();
             if (SUCCEEDED(action_hr) && pattern) {
-                action_hr = pattern->SetValue(wide(requested_value).c_str());
+                std::wstring value = wide(requested_value);
+                BSTR value_bstr = SysAllocStringLen(value.data(), static_cast<UINT>(value.size()));
+                if (!value_bstr) {
+                    action_hr = E_OUTOFMEMORY;
+                } else {
+                    action_hr = pattern->SetValue(value_bstr);
+                    SysFreeString(value_bstr);
+                }
                 pattern->Release();
             }
         }
