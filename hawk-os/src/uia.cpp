@@ -168,7 +168,6 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
                             const std::string& requested_value,
                             std::string* result) {
     if (result) result->clear();
-    if (!hwnd) hwnd = GetForegroundWindow();
     if (!hwnd || !IsWindow(hwnd)) {
         if (result) *result = "no valid target window";
         return false;
@@ -269,7 +268,10 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
     const std::string op = to_lower(trim(action));
     bool ok = false;
     HRESULT action_hr = E_NOINTERFACE;
-    if (op == "read") {
+    if (op == "exists") {
+        if (result) *result = "control exists and is enabled";
+        ok = true;
+    } else if (op == "read") {
         std::wstring value = element_value(target);
         if (value.empty()) value = element_name(target);
         if (result) *result = narrow(value);
