@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 ZIG_BIN="${ZIG_BIN:-../toolchains/zig/zig.exe}"
-if [ -x "$ZIG_BIN" ]; then
+if [ -x "$ZIG_BIN" ] && [ "$(head -n 1 "$ZIG_BIN" 2>/dev/null || true)" != "version https://git-lfs.github.com/spec/v1" ]; then
   ZIG_BIN="$(cd "$(dirname "$ZIG_BIN")" && pwd)/$(basename "$ZIG_BIN")"
   USING_ZIG=1
   CXX=("$ZIG_BIN" c++)
