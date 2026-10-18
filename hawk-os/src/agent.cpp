@@ -378,6 +378,41 @@ bool Agent::step(const std::string& raw_line, int depth) {
         return remainder_after(line, (int)i);
     };
 
+    // Fail closed for actions with clear destructive or external side effects.
+    // Screen content can contain prompt injection, so auto-run is not consent.
+    std::string sensitive_reason;
+    if (cmd == "del" || cmd == "rm" || cmd == "delete") {
+        sensitive_reason = "Delete a file from Hawk's workspace";
+    } else if (cmd == "close") {
+        sensitive_reason = "Close a running application/window";
+    } else if (cmd == "open") {
+        std::string target = to_lower(trim(rest(1)));
+        static const char* safe_apps[] = {"notepad", "calc", "mspaint", "explorer",
+            "taskmgr", "cmd", "chrome", "msedge", "code", "notepad++", "settings"};
+        bool known_safe = false;
+        for (const char* app : safe_apps) if (target == app) known_safe = true;
+        if (!known_safe) sensitive_reason = "Launch an external file, application, URL, or system target";
+    } else if (cmd == "key" && a.size() > 1) {
+        std::string combo = to_lower(a[1]);
+        if (combo.find("alt+f4") != std::string::npos ||
+            combo.find("ctrl+alt") != std::string::npos ||
+            combo.find("ctrl+shift+esc") != std::string::npos ||
+            combo.find("win+") != std::string::npos ||
+            combo == "ctrl+w" || combo == "ctrl+q") {
+            sensitive_reason = "Use a system-level or application-closing keyboard shortcut";
+        }
+    }
+    if (!sensitive_reason.empty() && !config.allow_sensitive_actions) {
+        std::string details = raw_line;
+        if (details.size() > 220) details.resize(220);
+        bool approved = on_approval && on_approval(sensitive_reason, details);
+        if (!approved) {
+            log("warn", "blocked sensitive action (not approved): " + sensitive_reason);
+            return false;
+        }
+        log("info", "sensitive action approved for this step: " + sensitive_reason);
+    }
+
     // ---- seeing ----
     if (cmd == "shot") {
         if (config.dry_run) {
@@ -1313,8 +1348,34 @@ static bool json_skip_value(const std::string& s, size_t* p, int depth = 0) {
            !isspace(static_cast<unsigned char>(s[*p]))) ++*p;
     if (*p == begin) return false;
     std::string atom = s.substr(begin, *p - begin);
-    return atom == "true" || atom == "false" || atom == "null" ||
-           (atom.find_first_not_of("-+0123456789.eE") == std::string::npos);
+    if (atom == "true" || atom == "false" || atom == "null") return true;
+
+    // Strict JSON-number grammar: reject leading +, leading zeroes, and
+    // incomplete fractions/exponents instead of accepting number-ish tokens.
+    size_t i = 0;
+    if (i < atom.size() && atom[i] == '-') ++i;
+    if (i >= atom.size()) return false;
+    if (atom[i] == '0') {
+        ++i;
+        if (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) return false;
+    } else {
+        if (atom[i] < '1' || atom[i] > '9') return false;
+        while (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) ++i;
+    }
+    if (i < atom.size() && atom[i] == '.') {
+        ++i;
+        size_t digits = i;
+        while (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) ++i;
+        if (i == digits) return false;
+    }
+    if (i < atom.size() && (atom[i] == 'e' || atom[i] == 'E')) {
+        ++i;
+        if (i < atom.size() && (atom[i] == '+' || atom[i] == '-')) ++i;
+        size_t digits = i;
+        while (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) ++i;
+        if (i == digits) return false;
+    }
+    return i == atom.size();
 }
 
 static bool json_member(const std::string& s, size_t object, const char* wanted,
@@ -1400,6 +1461,14 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
     if (config.api_key.empty()) {
         *err = "no API key set";
         return false;
+    }
+    if (!url.secure) {
+        const std::string host = to_lower(narrow(url.host));
+        const bool loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
+        if (!loopback) {
+            *err = "refusing to send an API key over unencrypted HTTP; use HTTPS";
+            return false;
+        }
     }
 
     std::string content;

@@ -174,6 +174,7 @@ struct Config {
     int max_steps = 150;           // total commands a goal may execute
     int segment_size = 6;          // planned commands run between vision checks
     bool auto_run = false;         // require explicit opt-in before executing model-generated scripts
+    bool allow_sensitive_actions = false; // CLI-only global override; GUI asks per action
     std::string base_url = "https://integrate.api.nvidia.com/v1";
     std::string api_key;
     // The default must actually be able to *see*: Nemotron 3.5 Super VL is
@@ -199,6 +200,8 @@ public:
     // Called with each script the planner or the model produces, so the app can
     // show it in the script box while it runs it.
     std::function<void(const std::string&)> on_script;
+    // Sensitive actions need a per-action decision in the GUI or explicit CLI override.
+    std::function<bool(const std::string&, const std::string&)> on_approval;
 
     // Execute a small command script (see README). Returns true if every
     // non-optional command succeeded.

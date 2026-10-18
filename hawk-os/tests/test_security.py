@@ -12,8 +12,8 @@ EXE = os.path.join(ROOT, "hawk.exe")
 WORK = os.path.join(ROOT, "workspace")
 
 
-def run_script(script: str) -> subprocess.CompletedProcess:
-    return subprocess.run([EXE, "--run", script], capture_output=True, text=True,
+def run_script(script: str, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run([EXE, *extra, "--run", script], capture_output=True, text=True,
                           timeout=30, errors="replace")
 
 
@@ -62,7 +62,23 @@ def main() -> int:
     if os.path.exists(created):
         os.remove(created)
 
-    print(f"\n{3 - failures}/3 safety checks passed")
+    # Destructive commands require GUI approval or an explicit CLI override.
+    guarded = os.path.join(WORK, "hawk-security-approval.txt")
+    with open(guarded, "w", encoding="utf-8") as f:
+        f.write("keep-me")
+    result = run_script("del hawk-security-approval.txt")
+    denied = result.returncode != 0 and os.path.exists(guarded) and "not approved" in (
+        result.stdout + result.stderr).lower()
+    print(f"sensitive delete denied by default: {'PASS' if denied else 'FAIL'}")
+    failures += not denied
+    result = run_script("del hawk-security-approval.txt", "--allow-sensitive")
+    allowed = result.returncode == 0 and not os.path.exists(guarded)
+    print(f"explicit sensitive-action override works: {'PASS' if allowed else 'FAIL'}")
+    failures += not allowed
+    if os.path.exists(guarded):
+        os.remove(guarded)
+
+    print(f"\n{5 - failures}/5 safety checks passed")
     return 1 if failures else 0
 
 

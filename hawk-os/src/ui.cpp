@@ -229,6 +229,13 @@ static void start_job(const std::string& kind, const std::string& payload) {
             auto* copy = new std::string(script);
             if (!PostMessageW(g_ui->hwnd, WM_APP_SCRIPT, 0, (LPARAM)copy)) delete copy;
         };
+        agent.on_approval = [](const std::string& action, const std::string& details) {
+            std::wstring prompt = L"Hawk is requesting permission for a sensitive action.\n\n";
+            prompt += L"Action: " + wide(action) + L"\nCommand: " + wide(details);
+            prompt += L"\n\nAllow this step only?";
+            return MessageBoxW(g_ui->hwnd, prompt.c_str(), L"Hawk OS - approval required",
+                               MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES;
+        };
         if (kind == "goal") agent.run_goal(payload);
         else agent.run_script(payload);
         PostMessageW(g_ui->hwnd, WM_APP_DONE, 0, 0);

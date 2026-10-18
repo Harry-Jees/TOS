@@ -1,2 +1,0 @@
-0
-593 281474977410365 1792179181444779900 e838a8d80b674f3a588c60eceb4108d3 1 libc\mingw\lib-common\api-ms-win-crt-conio-l1-1-0.def

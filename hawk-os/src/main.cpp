@@ -15,6 +15,7 @@ static void read_ini(Config* cfg) {
     std::string path = app_dir() + "\\hawk.ini";
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
+    std::string legacy_key, protected_key;
     char line[1024];
     while (fgets(line, sizeof(line), f)) {
         std::string s = trim(line);
@@ -24,11 +25,11 @@ static void read_ini(Config* cfg) {
         std::string k = to_lower(trim(s.substr(0, eq)));
         std::string v = trim(s.substr(eq + 1));
         if (k == "api_key_dpapi") {
-            cfg->api_key = unprotect_secret(v);
+            protected_key = v;
         } else if (k == "api_key") {
-            // Legacy compatibility: old versions wrote plaintext keys. The UI
-            // rewrites this as DPAPI-protected on the next settings save.
-            cfg->api_key = v;
+            // Legacy compatibility: old versions wrote plaintext keys. A
+            // protected key always takes precedence if both settings exist.
+            legacy_key = v;
         }
         else if (k == "base_url") cfg->base_url = v;
         else if (k == "model") cfg->model = v;
@@ -37,6 +38,7 @@ static void read_ini(Config* cfg) {
         else if (k == "step_delay_ms") { try { cfg->step_delay_ms = std::stoi(v); } catch (...) {} }
     }
     fclose(f);
+    cfg->api_key = !protected_key.empty() ? unprotect_secret(protected_key) : legacy_key;
 }
 
 static const char* env_or_null(const char* name) {
@@ -73,6 +75,7 @@ static void usage() {
     printf("  --selftest             prove capture + physical input work\n\n");
     printf("Options: --dry-run --delay <ms> --no-restore --key-file <path> --key <key>\n");
     printf("         --auto-run   explicitly allow model-generated scripts to execute\n");
+    printf("         --allow-sensitive   bypass per-action prompts (trusted CLI use only)\n");
     printf("         --model <id> --base-url <url> --no-vision --rounds <n> --steps <n>\n");
     printf("         --plan-only   let the model write a script but do not run it\n\n");
     printf("Script commands: shot shotwin region look elements clickel move click drag\n");
@@ -452,6 +455,7 @@ int run_cli(int argc, char** argv) {
             return 0;
         } else if (a == "--dry-run") cfg.dry_run = true;
         else if (a == "--auto-run") cfg.auto_run = true;
+        else if (a == "--allow-sensitive") cfg.allow_sensitive_actions = true;
         else if (a == "--no-restore") cfg.restore_cursor = false;
         else if (a == "--no-vision") cfg.vision = false;
         else if (a == "--plan-only") cfg.auto_run = false;
