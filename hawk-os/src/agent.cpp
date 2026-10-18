@@ -1398,7 +1398,7 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
         *err = "WinHttpOpen failed (" + std::to_string(GetLastError()) + ")";
         return false;
     }
-    WinHttpSetTimeouts(session, 10000, 30000, 120000, 120000);
+    WinHttpSetTimeouts(session, 10000, 10000, 30000, 30000);
 
     HINTERNET conn = WinHttpConnect(session, url.host.c_str(), url.port, 0);
     if (!conn) {
@@ -1454,20 +1454,31 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
 
     std::string data;
     DWORD avail = 0;
+    bool aborted = false, read_failed = false, response_too_large = false;
     do {
+        if (abort_requested()) { aborted = true; break; }
         avail = 0;
-        if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+        if (!WinHttpQueryDataAvailable(req, &avail)) { read_failed = true; break; }
+        if (avail == 0) break;
+        if (data.size() + static_cast<size_t>(avail) > 8u * 1024 * 1024) {
+            response_too_large = true;
+            break;
+        }
         std::string chunk(avail, '\0');
         DWORD read = 0;
-        if (!WinHttpReadData(req, chunk.data(), avail, &read) || read == 0) break;
+        if (!WinHttpReadData(req, chunk.data(), avail, &read)) { read_failed = true; break; }
+        if (read == 0) break;
         chunk.resize(read);
         data += chunk;
-        if (data.size() > 8u * 1024 * 1024) break;
     } while (avail > 0);
 
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(session);
+
+    if (aborted) { *err = "request stopped by user"; return false; }
+    if (read_failed) { *err = "failed while reading model response"; return false; }
+    if (response_too_large) { *err = "model response exceeded the 8 MiB safety limit"; return false; }
 
     if (status != 200) {
         std::string snippet = data.substr(0, 300);
