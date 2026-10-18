@@ -196,6 +196,111 @@ static bool workspace_file_path(const std::string& raw, std::string* resolved) {
     return true;
 }
 
+static bool valid_workflow_name(const std::string& name) {
+    if (name.empty() || name.size() > 48) return false;
+    for (unsigned char c : name)
+        if (!isalnum(c) && c != '-' && c != '_') return false;
+    const std::string low = to_lower(name);
+    static const char* reserved[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3",
+                                     "com4", "com5", "com6", "com7", "com8", "com9",
+                                     "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6",
+                                     "lpt7", "lpt8", "lpt9"};
+    for (const char* item : reserved) if (low == item) return false;
+    return true;
+}
+
+static bool workflow_file_path(const std::string& name, std::string* path) {
+    if (!valid_workflow_name(name)) return false;
+    const std::string workspace = app_dir() + "\\workspace";
+    const std::string directory = workspace + "\\workflows";
+    CreateDirectoryA(workspace.c_str(), nullptr);
+    CreateDirectoryA(directory.c_str(), nullptr);
+    return workspace_file_path("workflows\\" + name + ".hawk", path);
+}
+
+static bool read_workflow(const std::string& name, std::string* body, std::string* error) {
+    std::string path;
+    if (!workflow_file_path(name, &path)) {
+        *error = "invalid workflow name or unsafe workflow path";
+        return false;
+    }
+    DWORD attr = GetFileAttributesA(path.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY) ||
+        (attr & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        *error = "workflow does not exist or is not a regular file";
+        return false;
+    }
+    HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        *error = "workflow cannot be opened";
+        return false;
+    }
+    LARGE_INTEGER size{};
+    const bool sized = GetFileSizeEx(h, &size) != 0;
+    CloseHandle(h);
+    if (!sized || size.QuadPart < 0 || size.QuadPart > 1024 * 1024) {
+        *error = "workflow exceeds the 1 MiB size limit";
+        return false;
+    }
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) {
+        *error = "workflow cannot be read";
+        return false;
+    }
+    body->assign(static_cast<size_t>(size.QuadPart), '\0');
+    const size_t got = body->empty() ? 0 : fread(body->data(), 1, body->size(), f);
+    const bool ok = got == body->size() && !ferror(f);
+    fclose(f);
+    if (!ok) {
+        body->clear();
+        *error = "workflow read was incomplete";
+        return false;
+    }
+    return true;
+}
+
+// Expand saved workflow references before execution. Depth and size limits
+// prevent accidental cycles or runaway expansion; the normal action policy
+// still evaluates every expanded command at execution time.
+static bool expand_workflow_script(const std::string& input, std::string* output,
+                                   int depth, std::string* error) {
+    if (depth > 4) {
+        *error = "workflow nesting exceeds the 4-level limit";
+        return false;
+    }
+    if (input.size() > 1024 * 1024) {
+        *error = "script exceeds the 1 MiB expansion limit";
+        return false;
+    }
+    output->clear();
+    size_t pos = 0;
+    while (pos < input.size()) {
+        size_t nl = input.find('\n', pos);
+        const bool had_newline = nl != std::string::npos;
+        std::string line = input.substr(pos, had_newline ? nl - pos : std::string::npos);
+        const std::vector<std::string> words = split_words(trim(line));
+        if (words.size() >= 3 && to_lower(words[0]) == "workflow" &&
+            to_lower(words[1]) == "run") {
+            std::string body, nested;
+            if (!read_workflow(words[2], &body, error) ||
+                !expand_workflow_script(body, &nested, depth + 1, error)) return false;
+            if (output->size() + nested.size() > 1024 * 1024) {
+                *error = "expanded workflow exceeds the 1 MiB limit";
+                return false;
+            }
+            output->append(nested);
+            if (had_newline && (output->empty() || output->back() != '\n'))
+                output->push_back('\n');
+        } else {
+            output->append(line);
+            if (had_newline) output->push_back('\n');
+        }
+        pos = had_newline ? nl + 1 : input.size();
+    }
+    return true;
+}
+
 static void substitute(std::string& line, const Point& found, bool has_found,
                        const std::string& shot) {
     auto repl = [&line](const std::string& what, const std::string& with) {
