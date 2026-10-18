@@ -242,7 +242,8 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
         target = partial;
         partial = nullptr;
     }
-    if (exact) exact->Release();
+    // Keep the selected element's AddRef alive until the action has completed.
+    if (exact && target != exact) exact->Release();
     if (partial) partial->Release();
     walker->Release();
     root->Release();
