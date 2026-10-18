@@ -136,11 +136,14 @@ static bool workspace_file_path(const std::string& raw, std::string* resolved) {
     CreateDirectoryA(root.c_str(), nullptr);
     std::string candidate = root + "\\\\" + rel;
     char full_root[4096] = {}, full_candidate[4096] = {};
-    if (!GetFullPathNameA(root.c_str(), sizeof(full_root), full_root, nullptr) ||
-        !GetFullPathNameA(candidate.c_str(), sizeof(full_candidate), full_candidate, nullptr))
-        return false;
+    DWORD root_len = GetFullPathNameA(root.c_str(), sizeof(full_root), full_root, nullptr);
+    DWORD candidate_len = GetFullPathNameA(candidate.c_str(), sizeof(full_candidate), full_candidate, nullptr);
+    if (!root_len || root_len >= sizeof(full_root) || !candidate_len ||
+        candidate_len >= sizeof(full_candidate)) return false;
     std::string base(full_root), full(full_candidate);
     while (base.size() > 3 && (base.back() == '\\\\' || base.back() == '/')) base.pop_back();
+    DWORD root_attr = GetFileAttributesA(base.c_str());
+    if (root_attr == INVALID_FILE_ATTRIBUTES || (root_attr & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
     if (full.size() <= base.size() ||
         _strnicmp(full.c_str(), base.c_str(), base.size()) != 0 ||
         (full[base.size()] != '\\\\' && full[base.size()] != '/')) return false;
@@ -650,8 +653,9 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("fail", "type: " + err);
             return false;
         }
-        log("ok", "typed " + std::to_string(text.size()) + " char(s): " +
-                      text.substr(0, 60).append(text.size() > 60 ? "..." : ""));
+        // Never echo typed content into logs: it may contain personal data or
+        // credentials intended for the focused application.
+        log("ok", "typed " + std::to_string(text.size()) + " character(s) (content redacted)");
         return true;
     }
     if (cmd == "key") {
@@ -1000,6 +1004,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
         std::string path;
         if (!workspace_file_path(a[1], &path)) {
             log("fail", "write: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
+        DWORD existing = GetFileAttributesA(path.c_str());
+        if (existing != INVALID_FILE_ATTRIBUTES) {
+            log("fail", "write: refusing to overwrite an existing workspace file; use del explicitly first: " + path);
             return false;
         }
         std::string body = a.size() > 2 ? unescape(rest(2)) : "";
