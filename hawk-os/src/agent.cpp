@@ -16,6 +16,29 @@ namespace hawk {
 // ------------------------------------------------------------------ logging --
 static std::string log_path() { return app_dir() + "\\hawk.log"; }
 
+// Crash-diagnostic checkpoint: deliberately records progress metadata only,
+// never command arguments, typed text, screenshots, credentials, or file data.
+// Replace the manifest atomically so a crash cannot leave half-written JSON.
+static void write_run_checkpoint(const char* status, int attempted_steps, size_t next_offset) {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    const std::string path = app_dir() + "\\run-checkpoint.json";
+    const std::string temp = path + ".tmp";
+    FILE* f = fopen(temp.c_str(), "wb");
+    if (!f) return;
+    fprintf(f,
+            "{\\"schema_version\\":1,\\"status\\":\\"%s\\","
+            "\\"attempted_steps\\":%d,\\"next_script_offset\\":%llu,"
+            "\\"updated_at\\":\\"%04d-%02d-%02dT%02d:%02d:%02d\\"}\\n",
+            status, attempted_steps, static_cast<unsigned long long>(next_offset),
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    const bool closed = fclose(f) == 0;
+    if (!closed || !MoveFileExA(temp.c_str(), path.c_str(),
+                                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileA(temp.c_str());
+    }
+}
+
 void Agent::log(const std::string& level, const std::string& text) {
     LogLine line{level, text};
     history_.push_back(line);
@@ -319,7 +342,9 @@ bool Agent::run_script(const std::string& script) {
     log("info", "run start: " + std::to_string(split_words(script).size()) + " token(s) of input");
     int executed = 0, failed = 0;
     const int step_limit = config.max_steps > 0 ? config.max_steps : 150;
+    const char* checkpoint_status = "running";
     size_t pos = 0;
+    write_run_checkpoint(checkpoint_status, executed, pos);
     while (pos <= script.size()) {
         size_t nl = script.find('\n', pos);
         std::string line = script.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
@@ -334,12 +359,16 @@ bool Agent::run_script(const std::string& script) {
         }
         if (abort_requested()) {
             log("warn", "aborted by user (ESC or STOP)");
+            checkpoint_status = "aborted";
+            write_run_checkpoint(checkpoint_status, executed, pos);
             failed++;
             break;
         }
         if (executed >= step_limit) {
             log("fail", "run stopped: command limit reached (" + std::to_string(step_limit) +
                         "); split the task into smaller scripts");
+            checkpoint_status = "limit_reached";
+            write_run_checkpoint(checkpoint_status, executed, pos);
             failed++;
             break;
         }
@@ -353,11 +382,17 @@ bool Agent::run_script(const std::string& script) {
         if (!step(t, 0)) {
             failed++;
             log("fail", "step failed: " + t);
+            checkpoint_status = "failed";
+            write_run_checkpoint(checkpoint_status, executed, pos);
             if (config.dry_run) continue;
             log("warn", "stopping: a failed step means the state is no longer what the script expects");
             break;
         }
+        write_run_checkpoint("running", executed, pos);
     }
+    if (failed == 0) checkpoint_status = "completed";
+    else if (std::string(checkpoint_status) == "running") checkpoint_status = "failed";
+    write_run_checkpoint(checkpoint_status, executed, pos);
     if (config.restore_cursor) restore_cursor_origin();
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
