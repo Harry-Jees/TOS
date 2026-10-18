@@ -73,6 +73,7 @@ static void usage() {
     printf("  --focus <title part>   raise a window\n");
     printf("  --selftest             prove capture + physical input work\n\n");
     printf("Options: --dry-run --delay <ms> --no-restore --key-file <path> --key <key>\n");
+    printf("         --auto-run   explicitly allow model-generated scripts to execute\n");
     printf("         --model <id> --base-url <url> --no-vision --rounds <n> --steps <n>\n");
     printf("         --plan-only   let the model write a script but do not run it\n\n");
     printf("Script commands: shot shotwin region look elements clickel move click drag\n");
@@ -451,6 +452,7 @@ int run_cli(int argc, char** argv) {
             usage();
             return 0;
         } else if (a == "--dry-run") cfg.dry_run = true;
+        else if (a == "--auto-run") cfg.auto_run = true;
         else if (a == "--no-restore") cfg.restore_cursor = false;
         else if (a == "--no-vision") cfg.vision = false;
         else if (a == "--plan-only") cfg.auto_run = false;
