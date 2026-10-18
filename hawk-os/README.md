@@ -17,8 +17,7 @@ hawk.exe --auto-run --goal "..."  explicitly allow the model plan to execute
 hawk.exe --help               the full CLI
 ```
 
-Built and verified on Windows 11, 1600x900, 32-bit colour, no third-party
-libraries and no runtime dependencies (a single ~630 KB static `hawk.exe`).
+**Build status for this branch:** not yet verified on the maintainer's target laptop. Build and run the checks below before relying on it; hosted CI covers compilation and non-interactive regressions, not every real desktop/app interaction.
 
 ---
 
@@ -171,54 +170,16 @@ touch the secure desktop. These controls are defense-in-depth, not a sandbox:
 permitted mouse and keyboard actions can still affect signed-in apps and
 destructive UI controls. Do not run untrusted tasks unattended.
 
-## 5. How this was verified
+## 5. Verification status and checks
 
-Not "it compiled". These are the checks that ran against the built binary:
+Do not treat old screenshots, historical test counts, or a successful compile as proof that the current branch is safe on every desktop. The current branch's checks are intended to cover:
 
-* **`hawk.exe --selftest` — 21/21.** It builds a real window with a real target
-  square, then uses its own input engine to move the cursor there and click:
-  the click arrives as a `WM_LBUTTONDOWN` at client `85,125`, inside the
-  target. It also types 16 characters into a live `EDIT` control (all 16 arrive
-  in order), captures the screen, writes and re-reads a PNG, finds a colour it
-  painted, and proves a dry-run script executes nothing. The vision
-  primitives get the same treatment: `findarea` has to locate the whole blue
-  square it painted, `detect_elements` has to rank that control, and
-  `draw_grid` has to visibly overlay its grid.
-* **`python tests/test_hawk.py` — 19/19.** Drives the CLI and inspects the
-  artefacts: PNGs are fully decoded in Python (all five filter types, every
-  CRC checked), the pixel the tool reports is compared against the decoded
-  screenshot, `find` is verified by probing the location it returned, the
-  fallback encoder is exercised with `HAWK_NO_WIC=1`, and goal-mode checks
-  confirm screenshot attachment, vision requirements, and no guessed-plan
-  fallback when a model request fails. The pixel-comparison checks sample a
-  quiet corner of the taskbar and accept a screenshot taken immediately after
-  the probe, so a desktop with a playing video or a live editor open cannot
-  make them lie.
-* **`python tools/verify_goal_loop.py` — 3/3.** Runs the plan → execute →
-  verify loop against a local mock model, no API key needed: a plan is written,
-  executed and verified `done`; a corrective batch from a verify round is
-  inserted and executed; a plan that ends in `done` is verified with a fresh
-  screenshot instead of believed. Every vision request is asserted to really
-  carry the screenshot.
-* **`python tests/test_gui.py` — 12/12.** Starts the app, checks the geometry
-  it publishes, and confirms from captured pixels that the accent Run button,
-  the red STOP button, the header gradient and the screen preview really
-  rendered. Then it clicks the app's own **Capture** button *with Hawk OS's own
-  input engine* and asserts a new screenshot appeared on disk.
-* **`python tests/test_real_app.py` — 5/5.** Opens Notepad (a real third-party
-  application), opens a fresh tab, types 55 characters with synthetic
-  keystrokes, presses Save As (Ctrl+Shift+S), types a filename into Notepad's
-  own Save dialog, presses Enter — and the test then reads
-  `~/Documents/hawk-agent-proof.txt` from disk and checks the text matches byte
-  for byte.
+- `python tests/test_security.py` — workspace traversal, overwrite protection, safe file creation, and sensitive-action defaults.
+- `python tools/verify_goal_loop.py` — offline mocked-model plan/execute/verify scenarios, including screenshot attachment and Unicode output.
+- `hawk.exe --selftest` — interactive Win32 capture/input primitives on the actual desktop.
+- Manual checks — UI startup, settings/key migration, approval prompts, STOP behavior, screen-consent flow, and apps you intend to automate.
 
-Screenshots are compressed by Windows Imaging Component (a 1600x900 capture is
-~150-300 KB instead of 5.7 MB raw), which matters because goal mode has to send
-them to a model; the hand-written uncompressed encoder remains as a fallback
-that needs nothing from the system.
-
-`shots/` collects everything captured; the `--goal` path keeps its own shots
-prefixed `goal`.
+Build on Windows with the supported toolchain, then run the two non-interactive checks from `hawk-os/`. The self-test and manual checks touch the real desktop, so run them only in a session you control and save your work first. **This branch has not been validated on your laptop yet.**
 
 ## 6. Limitations, honestly
 
@@ -256,9 +217,10 @@ hawk-os/
   src/input.cpp       SendInput mouse/keyboard, cursor, wheel, abort checks
   src/winctl.cpp      window enumeration, lookup, focus
   src/agent.cpp       the command language, the step loop, the model client
+  src/uia.cpp         Windows UI Automation accessibility-tree perception
   src/ui.cpp          the app window, preview, ownerdraw controls, worker thread
   src/main.cpp        entry point, CLI, self-test
-  tests/              the three suites described above
+  tests/              non-interactive safety regression tests and other test helpers
   tools/              verify_goal_loop.py (offline goal-loop checks) + probes
   examples/           ready-to-run command scripts
   shots/              captures (git-ignored)
