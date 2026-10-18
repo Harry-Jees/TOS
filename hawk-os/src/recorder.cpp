@@ -23,6 +23,10 @@ bool g_ready_flag=false,g_setup_ok=false;
 std::string g_setup_error;
 POINT g_left_down{}; bool g_left_pending=false;
 
+bool foreground_is_hawk() {
+    HWND wnd=GetForegroundWindow(); if(!wnd)return false;
+    DWORD pid=0;GetWindowThreadProcessId(wnd,&pid);return pid==GetCurrentProcessId();
+}
 void add_event(const std::string& event) {
     std::lock_guard<std::mutex> guard(g_lock);
     if(!g_active.load()||g_events.size()>=20000)return;
@@ -44,7 +48,7 @@ std::string key_name(DWORD vk) {
     }
 }
 LRESULT CALLBACK mouse_hook(int code,WPARAM wp,LPARAM lp) {
-    if(code==HC_ACTION&&g_active.load()) {
+    if(code==HC_ACTION&&g_active.load()&&!foreground_is_hawk()) {
         const auto* m=reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
         if(wp==WM_LBUTTONDOWN){g_left_down=m->pt;g_left_pending=true;}
         else if(wp==WM_LBUTTONUP&&g_left_pending){
@@ -58,7 +62,7 @@ LRESULT CALLBACK mouse_hook(int code,WPARAM wp,LPARAM lp) {
     return CallNextHookEx(g_mouse,code,wp,lp);
 }
 LRESULT CALLBACK keyboard_hook(int code,WPARAM wp,LPARAM lp) {
-    if(code==HC_ACTION&&g_active.load()&&(wp==WM_KEYDOWN||wp==WM_SYSKEYDOWN)) {
+    if(code==HC_ACTION&&g_active.load()&&!foreground_is_hawk()&&(wp==WM_KEYDOWN||wp==WM_SYSKEYDOWN)) {
         const auto* k=reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
         const DWORD vk=k->vkCode;
         if(vk!=VK_SHIFT&&vk!=VK_LSHIFT&&vk!=VK_RSHIFT&&vk!=VK_CONTROL&&vk!=VK_LCONTROL&&vk!=VK_RCONTROL&&
