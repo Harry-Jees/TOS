@@ -214,6 +214,7 @@ static void start_job(const std::string& kind, const std::string& payload) {
     cfg.allow_screen_upload = screen_upload_approved;
     cfg.base_url = g_cfg.base_url;
     cfg.model = g_cfg.model;
+    cfg.vision = g_cfg.vision;
     cfg.step_delay_ms = g_cfg.step_delay_ms;
     cfg.auto_run = g_ui->auto_run;
 
