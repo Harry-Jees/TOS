@@ -108,6 +108,8 @@ bool find_color_area(const Image& img, uint32_t bgr, int tolerance, Rect* out);
 Image draw_grid(const Image& src, int step);
 // One-line-per-element description: "1. button 612,455 132x34 #0A84FF centre 678,472".
 std::string describe_elements(const std::vector<UiElement>& els);
+// Semantic accessibility tree for the foreground app; empty when unavailable.
+std::string describe_accessible_controls(HWND hwnd, int max_elements = 40);
 
 bool save_png(const Image& img, const std::string& path);
 bool save_bmp(const Image& img, const std::string& path);
