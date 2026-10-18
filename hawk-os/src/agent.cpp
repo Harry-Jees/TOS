@@ -43,8 +43,16 @@ Agent::Agent(Config cfg) : config(cfg) {
 
 Agent::~Agent() = default;
 
+static int bounded_ms(int value, int fallback, int maximum = 30000) {
+    if (value < 0) return 0;
+    if (value == 0) return 0;
+    if (value > maximum) return maximum;
+    return value;
+}
+
 static void sleep_ms(int ms) {
     // Awake often enough that ESC / the STOP button is noticed quickly.
+    // Callers clamp externally supplied durations before reaching this helper.
     while (ms > 0) {
         int slice = ms > 50 ? 50 : ms;
         Sleep(slice);
@@ -310,6 +318,7 @@ bool Agent::run_script(const std::string& script) {
 
     log("info", "run start: " + std::to_string(split_words(script).size()) + " token(s) of input");
     int executed = 0, failed = 0;
+    const int step_limit = config.max_steps > 0 ? config.max_steps : 150;
     size_t pos = 0;
     while (pos <= script.size()) {
         size_t nl = script.find('\n', pos);
@@ -328,7 +337,18 @@ bool Agent::run_script(const std::string& script) {
             failed++;
             break;
         }
-        if (config.step_delay_ms > 0) sleep_ms(config.step_delay_ms);
+        if (executed >= step_limit) {
+            log("fail", "run stopped: command limit reached (" + std::to_string(step_limit) +
+                        "); split the task into smaller scripts");
+            failed++;
+            break;
+        }
+        if (config.step_delay_ms > 0) sleep_ms(bounded_ms(config.step_delay_ms, 350));
+        if (abort_requested()) {
+            log("warn", "aborted by user during step delay");
+            failed++;
+            break;
+        }
         executed++;
         if (!step(t, 0)) {
             failed++;
@@ -772,7 +792,8 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (!need(1)) return false;
         std::string text = unescape(rest(1));
         if (config.dry_run) {
-            log("action", "type \"" + text + "\" (dry-run)");
+            log("action", "type (" + std::to_string(text.size()) +
+                          " character(s), content redacted; dry-run)");
             return true;
         }
         if (!type_text(wide(text), &err)) {
@@ -854,7 +875,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         return true;
     }
     if (cmd == "wait" || cmd == "sleep") {
-        int ms = need(1) ? number(1, 500) : 500;
+        int ms = bounded_ms(need(1) ? number(1, 500) : 500, 500);
         log("info", (config.dry_run ? "(dry-run) " : "") + std::string("waiting ") +
                         std::to_string(ms) + " ms");
         if (!config.dry_run) sleep_ms(ms);
@@ -866,7 +887,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // passes the file to the dying instance and no window ever appears.
         if (!need(1)) return false;
         std::string needle = a[1];
-        int timeout = a.size() > 2 ? number(2, 10000) : 10000;
+        int timeout = bounded_ms(a.size() > 2 ? number(2, 10000) : 10000, 10000);
         if (config.dry_run) {
             log("action", "waitclose " + needle + " (dry-run)");
             return true;
@@ -892,7 +913,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // own startup the way `open` + `focus` can.
         if (!need(1)) return false;
         std::string needle = a[1];
-        int timeout = a.size() > 2 ? number(2, 20000) : 20000;
+        int timeout = bounded_ms(a.size() > 2 ? number(2, 20000) : 20000, 20000);
         if (config.dry_run) {
             log("action", "waitfocus " + needle + " (dry-run)");
             return true;
