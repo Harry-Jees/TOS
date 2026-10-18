@@ -172,7 +172,9 @@ bolted on:
   found, and a failed step stops the run instead of ploughing on.
 * **Execution is bounded:** direct scripts stop at the configured step budget,
   and waits are capped at 30 seconds. Dry-run typing logs the character count,
-  never the typed content. See [Phase A acceptance criteria](docs/PHASE_A.md).
+  never the typed content. Real script runs atomically update `run-checkpoint.json`
+  with privacy-safe progress metadata (not a resumable script). See [Phase A
+  acceptance criteria](docs/PHASE_A.md).
 
 What it does **not** do: it does not ask for elevation, install anything, or
 touch the secure desktop. These controls are defense-in-depth, not a sandbox:
