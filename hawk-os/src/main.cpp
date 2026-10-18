@@ -79,7 +79,7 @@ static void usage() {
     printf("         --allow-screen-upload   consent to sending screenshots to the model provider\n");
     printf("         --model <id> --base-url <url> --no-vision --rounds <n> --steps <n>\n");
     printf("         --plan-only   let the model write a script but do not run it\n\n");
-    printf("Script commands: shot shotwin region look elements clickel move click drag\n");
+    printf("Script commands: shot shotwin region look elements clickel uia move click drag\n");
     printf("                 scroll smove sclick sdrag type key focus waitfocus open close\n");
     printf("                 wait waitclose pixel find findarea verifypixel windows monitors\n");
     printf("                 cursor write mkdir log try done\n");
