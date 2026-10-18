@@ -1565,7 +1565,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
     log("info", "commands: shot shotwin region look elements clickel move click drag scroll "
                 "type key focus open close wait waitclose waitfocus pixel find findarea "
                 "verifypixel smove sclick sdrag windows cursor monitors write read mkdir log "
-                "try done");
+                "workflow try done");
     return false;
 }
 
