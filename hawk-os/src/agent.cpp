@@ -564,7 +564,7 @@ bool Agent::run_script(const std::string& source_script) {
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
     log(failed ? "warn" : "ok", buf);
-    if (!config.dry_run) { std::string workflow_name; const auto source_words=split_words(trim(source_script)); if(source_words.size()==3&&to_lower(source_words[0])=="workflow"&&to_lower(source_words[1])=="run"&&valid_workflow_name(source_words[2]))workflow_name=source_words[2]; append_outcome_record(executed,failed,checkpoint_status,workflow_name); }
+    if (!config.dry_run) { std::string workflow_name;size_t scan=0;while(scan<source_script.size()){size_t nl=source_script.find('\n',scan);std::string line=source_script.substr(scan,nl==std::string::npos?std::string::npos:nl-scan);auto words=split_words(trim(line));if(words.size()==3&&to_lower(words[0])=="workflow"&&to_lower(words[1])=="run"&&valid_workflow_name(words[2])){workflow_name=words[2];break;}if(nl==std::string::npos)break;scan=nl+1;}append_outcome_record(executed,failed,checkpoint_status,workflow_name); }
     Point after = cursor_pos();
     if (after.x != cursor_before.x || after.y != cursor_before.y)
         log("info", "cursor moved " + std::to_string(cursor_before.x) + "," +
@@ -1508,7 +1508,18 @@ bool Agent::step(const std::string& raw_line, int depth) {
         const std::string operation = to_lower(a[1]);
         if(operation=="record"){
             if(a.size()==3&&to_lower(a[2])=="start"){std::string e;if(!start_input_recording(&e)){log("fail","workflow record: "+e);return false;}log("warn","RECORDING ACTIVE: global clicks and key chords are captured locally; do not type passwords or secrets. Run 'workflow record stop <name>' to finish.");return true;}
-            if(a.size()==4&&to_lower(a[2])=="stop"){const std::string name=a[3];if(!valid_workflow_name(name)){log("fail","workflow record stop: invalid workflow name");return false;}std::string body,e,path;if(!stop_input_recording(&body,&e)){log("fail","workflow record: "+e);return false;}if(!workflow_file_path(name,&path)){log("fail","workflow record: unsafe workflow path");return false;}HANDLE file=CreateFileA(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE){log("fail","workflow record: file exists or cannot be created; recording stopped but not saved");return false;}DWORD written=0;bool ok=WriteFile(file,body.data(),(DWORD)body.size(),&written,nullptr)&&written==body.size()&&FlushFileBuffers(file);CloseHandle(file);if(!ok){DeleteFileA(path.c_str());log("fail","workflow record: could not save complete workflow");return false;}log("ok","recorded workflow '"+name+"' ("+std::to_string(body.size())+" bytes); review it before replay");return true;}
+            if(a.size()==4&&to_lower(a[2])=="stop"){
+                const std::string name=a[3];if(!valid_workflow_name(name)){log("fail","workflow record stop: invalid workflow name");return false;}
+                std::string body,e,path;if(!workflow_file_path(name,&path)){log("fail","workflow record: unsafe workflow path");return false;}
+                if(GetFileAttributesA(path.c_str())!=INVALID_FILE_ATTRIBUTES){log("fail","workflow record: workflow already exists; choose another name");return false;}
+                if(config.dry_run){log("fail","workflow record is unavailable in dry-run mode");return false;}
+                if(!stop_input_recording(&body,&e)){log("fail","workflow record: "+e);return false;}
+                HANDLE file=CreateFileA(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+                if(file==INVALID_HANDLE_VALUE){log("fail","workflow record: file cannot be created; recording stopped but not saved");return false;}
+                DWORD written=0;bool ok=WriteFile(file,body.data(),(DWORD)body.size(),&written,nullptr)&&written==body.size()&&FlushFileBuffers(file);CloseHandle(file);
+                if(!ok){DeleteFileA(path.c_str());log("fail","workflow record: could not save complete workflow");return false;}
+                log("ok","recorded workflow '"+name+"' ("+std::to_string(body.size())+" bytes); review it before replay");return true;
+            }
             log("fail","workflow record syntax: workflow record start | workflow record stop <name>");return false;
         }
         if (operation == "save") {
