@@ -287,7 +287,10 @@ bool Agent::look() {
                   std::to_string(els.size()) + " control(s) detected" +
                   (last_shot_.empty() ? "" : (", screenshot " + last_shot_)));
     log("info", visual_report(img));
-    std::string accessible = describe_accessible_controls(active_target_window(), 40);
+    HWND ui_target = active_target_window();
+    std::string accessible = describe_accessible_controls(ui_target, 40);
+    if (ui_target)
+        log("info", "UI Automation target window: \"" + narrow(window_title(ui_target)) + "\"");
     if (!accessible.empty()) log("info", "Windows accessibility controls:\n" + accessible);
     if (!els.empty())
         log("info", "click the top control with: click " +
@@ -2205,7 +2208,10 @@ bool Agent::run_goal(const std::string& goal) {
         Rect v = virtual_desktop();
         remember_map(small, v);  // sclick/smove now aim in this screenshot's pixel space
         *analysis = visual_report(small);
-        std::string accessible = describe_accessible_controls(active_target_window(), 40);
+        HWND ui_target = active_target_window();
+        if (ui_target)
+            *analysis += "\nUI Automation target window: \"" + narrow(window_title(ui_target)) + "\"\n";
+        std::string accessible = describe_accessible_controls(ui_target, 40);
         if (!accessible.empty()) *analysis += "\nWindows accessibility controls:\n" + accessible;
         shot_w = small.w;
         shot_h = small.h;
