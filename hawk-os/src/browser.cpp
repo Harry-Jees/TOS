@@ -4,6 +4,7 @@
 #include "hawk.h"
 #include <winhttp.h>
 #include <algorithm>
+#include <cstdio>
 #include <string>
 
 namespace hawk {
