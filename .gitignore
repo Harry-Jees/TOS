@@ -1,0 +1,23 @@
+# Local secrets and user-specific configuration
+hawk-os/hawk.ini
+hawk-os/*.key
+hawk-os/*.pem
+hawk-os/*.p12
+
+# Hawk build and runtime artifacts
+hawk-os/hawk.exe
+hawk-os/hawk.pdb
+hawk-os/build/
+hawk-os/*.o
+hawk-os/*.obj
+hawk-os/hawk.log
+hawk-os/ui-layout.txt
+hawk-os/shots/
+hawk-os/workspace/
+hawk-os/__pycache__/
+hawk-os/**/__pycache__/
+hawk-os/.pytest_cache/
+
+# Toolchain caches (the toolchain itself should be installed/released separately)
+toolchains/zcache/
+hawk-os/zig-cache/

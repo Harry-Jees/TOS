@@ -28,6 +28,9 @@ std::wstring wide(const std::string& utf8);
 std::string narrow(const std::wstring& utf16);
 std::string to_lower(std::string s);
 std::string trim(const std::string& s);
+// Protect API credentials with Windows DPAPI (current Windows user scope).
+std::string protect_secret(const std::string& plaintext);
+std::string unprotect_secret(const std::string& protected_hex);
 std::vector<std::string> split_words(const std::string& s, int max_parts = 0);
 std::wstring format_wide(const wchar_t* fmt, ...);
 std::string exe_dir();          // directory containing the running executable
@@ -105,6 +108,14 @@ bool find_color_area(const Image& img, uint32_t bgr, int tolerance, Rect* out);
 Image draw_grid(const Image& src, int step);
 // One-line-per-element description: "1. button 612,455 132x34 #0A84FF centre 678,472".
 std::string describe_elements(const std::vector<UiElement>& els);
+// Semantic accessibility tree for the selected target app; empty when unavailable.
+std::string describe_accessible_controls(HWND hwnd, int max_elements = 40);
+// Act on a uniquely named, visible Windows control through its supported UIA pattern.
+// Actions: invoke/click, set, toggle, select, expand, collapse, focus, read.
+bool act_accessible_control(HWND hwnd, const std::string& action,
+                            const std::string& requested_name,
+                            const std::string& requested_value,
+                            std::string* result);
 
 bool save_png(const Image& img, const std::string& path);
 bool save_bmp(const Image& img, const std::string& path);
@@ -156,6 +167,7 @@ struct WinInfo {
 
 std::vector<WinInfo> list_windows(size_t limit = 200);
 HWND find_window(const std::string& needle);              // by title substring
+HWND active_target_window();                              // foreground app, excluding Hawk itself
 std::wstring window_title(HWND hwnd);
 bool focus_window(HWND hwnd);
 std::string describe_windows(size_t limit);
@@ -168,7 +180,9 @@ struct Config {
     int max_rounds = 14;           // LLM plan/verify rounds per goal
     int max_steps = 150;           // total commands a goal may execute
     int segment_size = 6;          // planned commands run between vision checks
-    bool auto_run = true;          // execute scripts the model generates
+    bool auto_run = false;         // require explicit opt-in before executing model-generated scripts
+    bool allow_sensitive_actions = false; // CLI-only global override; GUI asks per action
+    bool allow_screen_upload = false; // explicit per-run consent before sending screenshots to a model
     std::string base_url = "https://integrate.api.nvidia.com/v1";
     std::string api_key;
     // The default must actually be able to *see*: Nemotron 3.5 Super VL is
@@ -194,6 +208,8 @@ public:
     // Called with each script the planner or the model produces, so the app can
     // show it in the script box while it runs it.
     std::function<void(const std::string&)> on_script;
+    // Sensitive actions need a per-action decision in the GUI or explicit CLI override.
+    std::function<bool(const std::string&, const std::string&)> on_approval;
 
     // Execute a small command script (see README). Returns true if every
     // non-optional command succeeded.

@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an improvement to Hawk
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user problem or workflow should improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the user experience and expected result.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and privacy considerations
+      description: Could this access files, screenshots, credentials, or control another app?
+    validations:
+      required: false

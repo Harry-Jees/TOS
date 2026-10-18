@@ -88,7 +88,7 @@ struct UiState {
     DWORD suppress_click_until = 0;
     bool click_through = false;
     bool dry_run = false;
-    bool auto_run = true;
+    bool auto_run = false;
     bool follow_log = true;
     std::string status_text = "idle";
     std::string run_state = "idle";   // idle | running | stopping
@@ -193,14 +193,28 @@ static void start_job(const std::string& kind, const std::string& payload) {
         log_append(LogLine{"warn", "a run is already in progress"});
         return;
     }
+    bool screen_upload_approved = false;
+    if (kind == "goal" && g_cfg.vision && !g_cfg.api_key.empty()) {
+        int consent = MessageBoxW(
+            g_ui->hwnd,
+            L"Hawk will capture your screen and send the screenshot to the model provider configured in Model settings. Screenshots may contain private information. Continue only if you trust that provider.",
+            L"Screen privacy check", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+        if (consent != IDOK) {
+            log_append(LogLine{"info", "goal cancelled before sending a screenshot"});
+            return;
+        }
+        screen_upload_approved = true;
+    }
     if (g_worker.joinable()) g_worker.join();
 
     Config cfg;
     cfg.dry_run = g_ui->dry_run;
     cfg.restore_cursor = SendMessageW(g_ui->chk_restore, BM_GETCHECK, 0, 0) == BST_CHECKED;
     cfg.api_key = g_cfg.api_key;
+    cfg.allow_screen_upload = screen_upload_approved;
     cfg.base_url = g_cfg.base_url;
     cfg.model = g_cfg.model;
+    cfg.vision = g_cfg.vision;
     cfg.step_delay_ms = g_cfg.step_delay_ms;
     cfg.auto_run = g_ui->auto_run;
 
@@ -218,6 +232,13 @@ static void start_job(const std::string& kind, const std::string& payload) {
         agent.on_script = [](const std::string& script) {
             auto* copy = new std::string(script);
             if (!PostMessageW(g_ui->hwnd, WM_APP_SCRIPT, 0, (LPARAM)copy)) delete copy;
+        };
+        agent.on_approval = [](const std::string& action, const std::string& details) {
+            std::wstring prompt = L"Hawk is requesting permission for a sensitive action.\n\n";
+            prompt += L"Action: " + wide(action) + L"\nCommand: " + wide(details);
+            prompt += L"\n\nAllow this step only?";
+            return MessageBoxW(g_ui->hwnd, prompt.c_str(), L"Hawk OS - approval required",
+                               MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES;
         };
         if (kind == "goal") agent.run_goal(payload);
         else agent.run_script(payload);
@@ -618,11 +639,17 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (!key.empty()) g_cfg.api_key = key;
                 if (!url.empty()) g_cfg.base_url = url;
                 if (!model.empty()) g_cfg.model = model;
-                // persist to hawk.ini next to the executable (never logged)
+                // Protect credentials with Windows DPAPI before writing settings.
+                std::string protected_key = protect_secret(g_cfg.api_key);
+                if (!g_cfg.api_key.empty() && protected_key.empty()) {
+                    MessageBoxW(hwnd, L"Windows could not protect the API key. Settings were not saved.",
+                                L"Hawk OS security", MB_OK | MB_ICONERROR);
+                    return 0;
+                }
                 FILE* f = fopen((app_dir() + "\\hawk.ini").c_str(), "w");
                 if (f) {
-                    fprintf(f, "# Hawk OS settings - keep this file to yourself\n");
-                    if (!g_cfg.api_key.empty()) fprintf(f, "api_key=%s\n", g_cfg.api_key.c_str());
+                    fprintf(f, "# Hawk OS settings - API key is DPAPI-protected for this Windows user\n");
+                    if (!protected_key.empty()) fprintf(f, "api_key_dpapi=%s\n", protected_key.c_str());
                     fprintf(f, "base_url=%s\n", g_cfg.base_url.c_str());
                     fprintf(f, "model=%s\n", g_cfg.model.c_str());
                     fprintf(f, "vision=%d\n", g_cfg.vision ? 1 : 0);
@@ -653,7 +680,7 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TextOutW(dc, 20, 18, L"Model settings", 14);
             SelectObject(dc, g_ui->f_ui);
             SetTextColor(dc, C_MUTED);
-            const wchar_t* l1 = L"API key (NVIDIA, OpenAI, OpenRouter, local - stored in hawk.ini)";
+            const wchar_t* l1 = L"API key (encrypted with Windows DPAPI for this Windows user)";
             const wchar_t* l2 = L"Base URL (OpenAI-compatible, .../v1)";
             const wchar_t* l3 = L"Model id - must be able to SEE screenshots (default is NVIDIA's vision model)";
             TextOutW(dc, 20, 40, l1, (int)wcslen(l1));
@@ -793,11 +820,11 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_ui->chk_click = CreateWindowExW(0, L"BUTTON", L"Click-through",
                                               WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                               hwnd, (HMENU)ID_CHK_CLICKTHRU, nullptr, nullptr);
-            g_ui->chk_autorun = CreateWindowExW(0, L"BUTTON", L"Auto-run scripts",
+            g_ui->chk_autorun = CreateWindowExW(0, L"BUTTON", L"Auto-run (risky)",
                                                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                                 hwnd, (HMENU)ID_CHK_AUTORUN, nullptr, nullptr);
             SendMessageW(g_ui->chk_restore, BM_SETCHECK, BST_CHECKED, 0);
-            SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_CHECKED, 0);
+            SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_UNCHECKED, 0);
 
             for (HWND h : {g_ui->goal, g_ui->chk_dry, g_ui->chk_restore, g_ui->chk_click,
                            g_ui->chk_autorun})
@@ -976,13 +1003,25 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                                                        : L"Click-through");
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
-                case ID_CHK_AUTORUN:
-                    g_ui->auto_run =
+                case ID_CHK_AUTORUN: {
+                    bool enable =
                         SendMessageW(g_ui->chk_autorun, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    if (enable) {
+                        int consent = MessageBoxW(
+                            hwnd,
+                            L"Auto-run allows model-generated commands to control your real desktop. A malicious webpage or on-screen prompt may try to manipulate the model. Only enable this for tasks you trust. Continue?",
+                            L"Enable risky automation?", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+                        if (consent != IDOK) {
+                            enable = false;
+                            SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_UNCHECKED, 0);
+                        }
+                    }
+                    g_ui->auto_run = enable;
                     log_append(LogLine{"info", g_ui->auto_run
-                                                    ? "auto-run on: generated scripts are executed"
-                                                    : "auto-run off: scripts are only generated"});
+                                                    ? "auto-run enabled by user confirmation"
+                                                    : "auto-run off: generated scripts are only reviewed"});
                     return 0;
+                }
                 case ID_QUICK1: {
                     Rect v = virtual_desktop();
                     char buf[128];

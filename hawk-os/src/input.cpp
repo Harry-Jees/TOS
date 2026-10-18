@@ -82,6 +82,8 @@ bool move_cursor(int x, int y, std::string* err, Point* landed) {
     // Absolute mouse coordinates are normalised over the whole virtual desktop.
     in.mi.dx = (LONG)(((double)(x - v.x) * 65535.0) / (v.w > 1 ? v.w - 1 : 1) + 0.5);
     in.mi.dy = (LONG)(((double)(y - v.y) * 65535.0) / (v.h > 1 ? v.h - 1 : 1) + 0.5);
+    // Prefer SendInput, but retain the SetCursorPos fallback for environments
+    // that block absolute synthetic mouse events.
     send(in);
 
     Point p = cursor_pos();
@@ -107,20 +109,25 @@ bool move_cursor_relative(int dx, int dy, std::string* err, Point* landed) {
     in.mi.dwFlags = MOUSEEVENTF_MOVE;
     in.mi.dx = dx;
     in.mi.dy = dy;
-    send(in);
+    bool injected = send(in);
     Point after = cursor_pos();
     int wx = before.x + dx, wy = before.y + dy;
-    if (!within(after, wx, wy)) {
+    if (!injected || !within(after, wx, wy)) {
+        // SetCursorPos clamps out-of-range coordinates. Treat a clamped or
+        // otherwise incorrect final position as failure, never as success.
         SetCursorPos(wx, wy);
-        if (err) *err = "clamped to screen edge";
         after = cursor_pos();
     }
     if (landed) *landed = after;
+    if (!within(after, wx, wy)) {
+        if (err) *err = "relative move did not reach requested position (screen edge or input blocked)";
+        return false;
+    }
     return true;
 }
 
 // ---------------------------------------------------------------- clicking --
-static void send_button(const char* button, bool down) {
+static bool send_button(const char* button, bool down) {
     INPUT in{};
     in.type = INPUT_MOUSE;
     std::string b = to_lower(button ? button : "left");
@@ -131,7 +138,7 @@ static void send_button(const char* button, bool down) {
     } else {
         in.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
     }
-    send(in);
+    return send(in);
 }
 
 bool click_mouse(const std::string& button, int times, std::string* err) {
@@ -143,9 +150,15 @@ bool click_mouse(const std::string& button, int times, std::string* err) {
     if (times < 1) times = 1;
     if (times > 3) times = 3;
     for (int i = 0; i < times; i++) {
-        send_button(button.c_str(), true);
+        if (!send_button(button.c_str(), true)) {
+            if (err) *err = "SendInput refused mouse button down";
+            return false;
+        }
         Sleep(12);
-        send_button(button.c_str(), false);
+        if (!send_button(button.c_str(), false)) {
+            if (err) *err = "SendInput refused mouse button up";
+            return false;
+        }
         if (i + 1 < times) Sleep(38);  // a double click must arrive quickly
     }
     return true;
@@ -155,7 +168,10 @@ bool drag_mouse(int x1, int y1, int x2, int y2, const std::string& button, std::
     if (!move_cursor(x1, y1, err)) return false;
     raise_window_under_cursor();
     Sleep(30);
-    send_button(button.c_str(), true);
+    if (!send_button(button.c_str(), true)) {
+        if (err) *err = "SendInput refused drag button down";
+        return false;
+    }
     Sleep(30);
     int steps = 24;
     for (int i = 1; i <= steps; i++) {
@@ -170,7 +186,10 @@ bool drag_mouse(int x1, int y1, int x2, int y2, const std::string& button, std::
         Sleep(8);
     }
     Sleep(30);
-    send_button(button.c_str(), false);
+    if (!send_button(button.c_str(), false)) {
+        if (err) *err = "SendInput refused drag button up";
+        return false;
+    }
     Point p = cursor_pos();
     if (!within(p, x2, y2)) {
         if (err) *err = "drag ended at " + std::to_string(p.x) + "," + std::to_string(p.y);
@@ -218,11 +237,17 @@ bool type_text(const std::wstring& text, std::string* err) {
         }
         wchar_t ch = text[i];
         if (ch == L'\n') {
-            SendInput(2, nl, sizeof(INPUT));
+            if (SendInput(2, nl, sizeof(INPUT)) != 2) {
+                if (err) *err = "SendInput refused Enter";
+                return false;
+            }
         } else if (ch == L'\t') {
             nl[0].ki.wVk = VK_TAB;
             nl[1].ki.wVk = VK_TAB;
-            SendInput(2, nl, sizeof(INPUT));
+            if (SendInput(2, nl, sizeof(INPUT)) != 2) {
+                if (err) *err = "SendInput refused Tab";
+                return false;
+            }
             nl[0].ki.wVk = VK_RETURN;
             nl[1].ki.wVk = VK_RETURN;
         } else if (ch == L'\r') {

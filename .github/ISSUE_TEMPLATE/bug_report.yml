@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible problem in Hawk
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include API keys, private screenshots, logs with personal data, or other secrets. Report security vulnerabilities privately using SECURITY.md."
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the unexpected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open Hawk... 2. Enter a task... 3. Observe..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hawk version or commit
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Remove personal data and secrets before posting.
+    validations:
+      required: false

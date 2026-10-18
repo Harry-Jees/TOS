@@ -1,2 +1,0 @@
-0
-1882 1125899907531761 1747954900000000000 95fb7066c1f6583ab5ffdb4428d323e5 1 libc\mingw\lib-common\api-ms-win-crt-filesystem-l1-1-0.def.in

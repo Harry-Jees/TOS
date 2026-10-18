@@ -4,6 +4,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <wincrypt.h>
+
+#include <vector>
 
 namespace hawk {
 
@@ -21,6 +24,52 @@ std::string narrow(const std::wstring& utf16) {
     std::string out((size_t)n, '\0');
     WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), (int)utf16.size(), out.data(), n, nullptr, nullptr);
     return out;
+}
+
+std::string protect_secret(const std::string& plaintext) {
+    if (plaintext.empty()) return "";
+    DATA_BLOB input{};
+    input.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()));
+    input.cbData = static_cast<DWORD>(plaintext.size());
+    DATA_BLOB output{};
+    if (!CryptProtectData(&input, L"Hawk OS API key", nullptr, nullptr, nullptr,
+                          CRYPTPROTECT_UI_FORBIDDEN, &output)) return "";
+    static const char* hex = "0123456789abcdef";
+    std::string encoded = "dpapi:v1:";
+    encoded.reserve(9 + output.cbData * 2);
+    for (DWORD i = 0; i < output.cbData; ++i) {
+        encoded.push_back(hex[output.pbData[i] >> 4]);
+        encoded.push_back(hex[output.pbData[i] & 15]);
+    }
+    LocalFree(output.pbData);
+    return encoded;
+}
+
+std::string unprotect_secret(const std::string& protected_hex) {
+    const std::string prefix = "dpapi:v1:";
+    if (protected_hex.compare(0, prefix.size(), prefix) != 0) return "";
+    std::string hex = protected_hex.substr(prefix.size());
+    if (hex.empty() || (hex.size() & 1) || hex.size() > 16384) return "";
+    auto nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::vector<BYTE> bytes;
+    bytes.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        int hi = nibble(hex[i]), lo = nibble(hex[i + 1]);
+        if (hi < 0 || lo < 0) return "";
+        bytes.push_back(static_cast<BYTE>((hi << 4) | lo));
+    }
+    DATA_BLOB input{static_cast<DWORD>(bytes.size()), bytes.data()}, output{};
+    if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr,
+                            CRYPTPROTECT_UI_FORBIDDEN, &output)) return "";
+    std::string plaintext(reinterpret_cast<char*>(output.pbData), output.cbData);
+    SecureZeroMemory(output.pbData, output.cbData);
+    LocalFree(output.pbData);
+    return plaintext;
 }
 
 std::string to_lower(std::string s) {

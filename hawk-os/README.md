@@ -12,12 +12,12 @@ exactly what happened afterwards.
 hawk.exe                      the app window (live screen + Agent panel)
 hawk.exe --selftest           prove capture + physical input work on this PC
 hawk.exe --run "..."          execute agent commands
-hawk.exe --goal "..."         let a vision model plan and act
+hawk.exe --goal "..."         ask a vision model to plan (plan-only by default)
+hawk.exe --auto-run --goal "..."  explicitly allow the model plan to execute
 hawk.exe --help               the full CLI
 ```
 
-Built and verified on Windows 11, 1600x900, 32-bit colour, no third-party
-libraries and no runtime dependencies (a single ~630 KB static `hawk.exe`).
+**Build status for this branch:** not yet verified on the maintainer's target laptop. Build and run the checks below before relying on it; hosted CI covers compilation and non-interactive regressions, not every real desktop/app interaction.
 
 ---
 
@@ -29,16 +29,19 @@ Everything below is a real action on the real machine:
 | --- | --- |
 | **See** | `shot`, `shotwin <title>`, `region x y w h`, `look`, `elements [x y w h]`, `windows`, `monitors`, `cursor`, `pixel x y` |
 | **Touch** | `move x y`, `move rel dx dy`, `click [left\|right\|double] [x y]`, `clickel <rank> [right\|double]`, `drag x1 y1 x2 y2`, `scroll <notches>` |
+| **Semantic controls** | `uia invoke "Save"`, `uia set "File name" "notes.txt"`, `uia toggle "Remember me"`, `uia select "Downloads"`, `uia expand "This PC"`, `uia focus "Search"`, `uia wait "Save" 5000` |
 | **Aim at a screenshot** | `smove x y`, `sclick [btn] x y`, `sdrag x1 y1 x2 y2` - coordinates read off the last screenshot; Hawk maps them onto the real screen itself |
 | **Type** | `type <text>` (real Unicode keystrokes, `\n` is Enter), `key ctrl+s`, `key alt+f4`, `key enter` |
 | **Windows** | `focus <title part>`, `waitfocus <title part> [ms]`, `close <title part>`, `waitclose <title part> [ms]`, `open notepad`, `open https://example.com` |
-| **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (relative paths land in `workspace/`; `~` starts at your profile folder) |
+| **Files** | `write <path> <text>`, `read <path>`, `mkdir <path>`, `ensure <path> [text]`, `del <path>` (file commands are confined to `workspace/`; absolute paths, `~`, and traversal are rejected) |
 | **Flow** | `wait <ms>`, `try <cmd>`, `verifypixel x y RRGGBB [tol]`, `log <text>`, `# comment`, `done` |
 
 `find` / `findarea` are what make "press the button" possible without knowing
 any coordinates: they scan a fresh screenshot for a colour - `find` for a
 pixel, `findarea` for a whole region (a button, not one pixel of it) - and can
 move/click what they found.
+
+**Prefer semantic UI Automation when available.** Hawk now exposes the selected target app's accessible control names and can use native Windows control patterns to invoke buttons, set editable values, toggle checkboxes, select items, expand/collapse trees, or focus controls. Use the exact accessible name shown by `look` or the goal planner. Ambiguous names and unsupported patterns fail rather than choosing an arbitrary control; vision-grounded mouse/keyboard actions remain the fallback for custom-drawn or inaccessible apps. Semantic actions force a fresh visual verification before the plan continues.
 
 **Scripts can see.** `look` captures the screen, detects the controls on it
 (buttons, fields, panels) entirely locally - no model involved - and logs a
@@ -73,9 +76,14 @@ One dark window, no menus to hunt through:
 * The window publishes its own geometry to `ui-layout.txt`, which is how a test
   (or another Hawk OS run) can click the app's buttons by coordinate.
 
-**Model settings** (the *Model* button) stores an API key, a base URL and a
-model id in `hawk.ini` next to the executable; the key is never printed to the
-log, the screen or the terminal. Any OpenAI-compatible endpoint works — NVIDIA
+**Model settings** (the *Model* button) stores a base URL, model id, and a
+Windows DPAPI-protected API key in `hawk.ini` next to the executable. Legacy
+plaintext keys are still read for migration; saving settings rewrites them in
+protected form. The key is never intentionally printed to the log, screen, or
+terminal. Screenshot upload is opt-in: the desktop UI asks before a vision goal
+sends screen content to the configured provider. In CLI mode, pass
+`--allow-screen-upload` explicitly with `--goal` to permit that upload; without
+it, image-bearing requests fail closed. Any OpenAI-compatible endpoint works — NVIDIA
 NIM is the default (`https://integrate.api.nvidia.com/v1`) with a vision model
 that can actually read screenshots (`nvidia/nemotron-3.5-super-vl-120b-a12b`,
 NVIDIA's first-party vision-language model). Or set `HAWK_API_KEY`,
@@ -121,7 +129,7 @@ that is missing. Any C++17 compiler that can link the Win32 import libraries
 works:
 
 ```
--luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs
+-luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32
 ```
 
 The executable is a GUI-subsystem binary, so no console window flashes when you
@@ -133,7 +141,9 @@ prints normally.
 Input injection is a sharp tool, so the guards are built in rather than
 bolted on:
 
-* **STOP** button aborts the run between steps, instantly.
+* **STOP** aborts between actions. An in-flight model request has bounded
+  WinHTTP timeouts and may take up to 30 seconds to return before the worker
+  can fully stop.
 * **Ctrl+Alt+H** is a global hotkey that aborts even if the window is not
   focused. **Holding ESC** aborts too — checked before every action.
 * A click that lands on a background window brings it to the front first —
@@ -141,6 +151,17 @@ bolted on:
   lose clicks to Windows' activation-click behaviour.
 * **Dry run** executes the whole script with every action logged instead of
   performed, so you can read what it *would* have done first.
+* **Model execution is opt-in.** Auto-run starts disabled. Review the generated
+  plan before enabling it. The CLI requires `--auto-run` to execute a model
+  plan automatically; `--plan-only` explicitly keeps execution disabled.
+* **Screen sharing is disclosed.** Goal mode asks before sending a screenshot
+  to the configured model provider. Cancel if the screen contains information
+  you do not want to share.
+* **Workspace writes are bounded.** File commands reject absolute/profile paths
+  and traversal, and `write` refuses to overwrite an existing file. Delete
+  it deliberately first if that is genuinely intended.
+* **Typed content is redacted in logs.** The action log records the character
+  count rather than echoing what was typed.
 * **Restore cursor** (on by default) puts the mouse back where it started when
   a run ends.
 * Every action is appended to `hawk.log` with a timestamp, and `--dry-run`
@@ -149,66 +170,34 @@ bolted on:
   and falls back to `SetCursorPos` if the normalised injection was refused,
   `click` reports where the cursor actually was, `find` re-probes the pixel it
   found, and a failed step stops the run instead of ploughing on.
+* **Execution is bounded:** direct scripts stop at the configured step budget,
+  and waits are capped at 30 seconds. Dry-run typing logs the character count,
+  never the typed content. Real script runs atomically update `run-checkpoint.json`
+  with privacy-safe progress metadata (not a resumable script). See [Phase A
+  acceptance criteria](docs/PHASE_A.md).
 
-What it does **not** do: it does not ask for elevation, does not install
-anything, does not touch a UAC prompt or the secure desktop (Windows blocks
-synthetic input there), and it does not hide: the window shows what it is
-doing, every time.
+What it does **not** do: it does not ask for elevation, install anything, or
+touch the secure desktop. These controls are defense-in-depth, not a sandbox:
+permitted mouse and keyboard actions can still affect signed-in apps and
+destructive UI controls. Do not run untrusted tasks unattended.
 
-## 5. How this was verified
+## 5. Verification status and checks
 
-Not "it compiled". These are the checks that ran against the built binary:
+Do not treat old screenshots, historical test counts, or a successful compile as proof that the current branch is safe on every desktop. The current branch's checks are intended to cover:
 
-* **`hawk.exe --selftest` — 21/21.** It builds a real window with a real target
-  square, then uses its own input engine to move the cursor there and click:
-  the click arrives as a `WM_LBUTTONDOWN` at client `85,125`, inside the
-  target. It also types 16 characters into a live `EDIT` control (all 16 arrive
-  in order), captures the screen, writes and re-reads a PNG, finds a colour it
-  painted, and proves a dry-run script executes nothing. The vision
-  primitives get the same treatment: `findarea` has to locate the whole blue
-  square it painted, `detect_elements` has to rank that control, and
-  `draw_grid` has to visibly overlay its grid.
-* **`python tests/test_hawk.py` — 19/19.** Drives the CLI and inspects the
-  artefacts: PNGs are fully decoded in Python (all five filter types, every
-  CRC checked), the pixel the tool reports is compared against the decoded
-  screenshot, `find` is verified by probing the location it returned, the
-  fallback encoder is exercised with `HAWK_NO_WIC=1`, and goal-mode checks
-  confirm screenshot attachment, vision requirements, and no guessed-plan
-  fallback when a model request fails. The pixel-comparison checks sample a
-  quiet corner of the taskbar and accept a screenshot taken immediately after
-  the probe, so a desktop with a playing video or a live editor open cannot
-  make them lie.
-* **`python tools/verify_goal_loop.py` — 3/3.** Runs the plan → execute →
-  verify loop against a local mock model, no API key needed: a plan is written,
-  executed and verified `done`; a corrective batch from a verify round is
-  inserted and executed; a plan that ends in `done` is verified with a fresh
-  screenshot instead of believed. Every vision request is asserted to really
-  carry the screenshot.
-* **`python tests/test_gui.py` — 12/12.** Starts the app, checks the geometry
-  it publishes, and confirms from captured pixels that the accent Run button,
-  the red STOP button, the header gradient and the screen preview really
-  rendered. Then it clicks the app's own **Capture** button *with Hawk OS's own
-  input engine* and asserts a new screenshot appeared on disk.
-* **`python tests/test_real_app.py` — 5/5.** Opens Notepad (a real third-party
-  application), opens a fresh tab, types 55 characters with synthetic
-  keystrokes, presses Save As (Ctrl+Shift+S), types a filename into Notepad's
-  own Save dialog, presses Enter — and the test then reads
-  `~/Documents/hawk-agent-proof.txt` from disk and checks the text matches byte
-  for byte.
+- `python tests/test_security.py` — workspace traversal, overwrite protection, safe file creation, and sensitive-action defaults.
+- `python tools/verify_goal_loop.py` — offline mocked-model plan/execute/verify scenarios, including screenshot attachment and Unicode output.
+- `hawk.exe --selftest` — interactive Win32 capture/input primitives on the actual desktop.
+- Manual checks — UI startup, settings/key migration, approval prompts, STOP behavior, screen-consent flow, and apps you intend to automate.
 
-Screenshots are compressed by Windows Imaging Component (a 1600x900 capture is
-~150-300 KB instead of 5.7 MB raw), which matters because goal mode has to send
-them to a model; the hand-written uncompressed encoder remains as a fallback
-that needs nothing from the system.
-
-`shots/` collects everything captured; the `--goal` path keeps its own shots
-prefixed `goal`.
+Build on Windows with the supported toolchain, then run the two non-interactive checks from `hawk-os/`. The self-test and manual checks touch the real desktop, so run them only in a session you control and save your work first. **This branch has not been validated on your laptop yet.**
 
 ## 6. Limitations, honestly
 
 * **Elevated windows are out of reach.** Windows UIPI stops a normal process
   injecting input into an admin window, and nothing can touch the UAC secure
-  desktop. Run Hawk OS as administrator if you need that (and accept the risk).
+  desktop. Hawk should not be run elevated by default; elevated automation is
+  intentionally outside the normal Phase 1 scope.
 * **Some games ignore synthetic input** because they read raw devices.
 * **The human and the agent share one mouse.** If you move the physical mouse
   mid-run, Windows resynchronises the cursor and the agent's position is gone.
@@ -240,11 +229,35 @@ hawk-os/
   src/input.cpp       SendInput mouse/keyboard, cursor, wheel, abort checks
   src/winctl.cpp      window enumeration, lookup, focus
   src/agent.cpp       the command language, the step loop, the model client
+  src/uia.cpp         Windows UI Automation accessibility-tree perception
   src/ui.cpp          the app window, preview, ownerdraw controls, worker thread
   src/main.cpp        entry point, CLI, self-test
-  tests/              the three suites described above
+  tests/              non-interactive safety regression tests and other test helpers
   tools/              verify_goal_loop.py (offline goal-loop checks) + probes
   examples/           ready-to-run command scripts
   shots/              captures (git-ignored)
   workspace/          files the agent writes with relative paths
 ```
+
+
+## 6. Open-source development and future direction
+
+Hawk is being developed as an open-source desktop agent, not an operating
+system. The target experience is a coworker-style task workflow: inspectable
+plans, step-by-step progress, approvals for risky actions, recoverable runs,
+and verified outcomes.
+
+- [Architecture and hardening roadmap](docs/ARCHITECTURE.md)
+- [Android voice companion design](docs/MOBILE_COMPANION.md)
+- [Open-source roadmap](OPEN_SOURCE_ROADMAP.md)
+- [Security policy](../SECURITY.md)
+- [Contributing](../CONTRIBUTING.md)
+
+A future Android companion will submit voice instructions and display progress
+on a paired PC. The Windows machine will remain the execution authority; the
+mobile app must not bypass local approval or send provider API keys to the
+phone or relay.
+
+The current build remains a prototype. The updated code has not yet been
+validated by a Windows build in this development session; follow the CI status
+and release notes before relying on it.

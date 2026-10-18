@@ -1,0 +1,55 @@
+name: Hawk Windows CI
+
+on:
+  push:
+    paths:
+      - "hawk-os/**"
+      - ".github/workflows/hawk-windows.yml"
+  pull_request:
+    paths:
+      - "hawk-os/**"
+      - ".github/workflows/hawk-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-goal-loop:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 MinGW toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+
+      - name: Build Hawk
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          bash build.sh
+
+      - name: Run non-interactive safety regressions
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tests/test_security.py
+
+      - name: Run offline goal-loop regression scenarios
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tools/verify_goal_loop.py
+
+      - name: Run Phase A execution safety regressions
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tools/verify_phase_a.py

@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 ZIG_BIN="${ZIG_BIN:-../toolchains/zig/zig.exe}"
-if [ -x "$ZIG_BIN" ]; then
+if [ -x "$ZIG_BIN" ] && [ "$(head -n 1 "$ZIG_BIN" 2>/dev/null || true)" != "version https://git-lfs.github.com/spec/v1" ]; then
   ZIG_BIN="$(cd "$(dirname "$ZIG_BIN")" && pwd)/$(basename "$ZIG_BIN")"
   USING_ZIG=1
   CXX=("$ZIG_BIN" c++)
@@ -25,8 +25,8 @@ else
 fi
 
 SRC=(src/util.cpp src/image.cpp src/capture.cpp src/input.cpp src/winctl.cpp \
-     src/agent.cpp src/ui.cpp src/main.cpp)
-LIBS=(-luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs)
+     src/agent.cpp src/uia.cpp src/ui.cpp src/main.cpp)
+LIBS=(-luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32 -luuid)
 
 mkdir -p build
 if [ "$USING_ZIG" -eq 1 ]; then

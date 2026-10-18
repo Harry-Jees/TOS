@@ -94,6 +94,36 @@ static bool contains_ci(const std::wstring& hay, const std::wstring& needle) {
     return h.find(n) != std::wstring::npos;
 }
 
+static BOOL CALLBACK target_window_enum(HWND hwnd, LPARAM data) {
+    auto* selected = reinterpret_cast<HWND*>(data);
+    if (*selected || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == GetCurrentProcessId()) return TRUE;
+    RECT rc{};
+    if (GetWindowTextLengthW(hwnd) <= 0 ||
+        (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0 ||
+        !GetWindowRect(hwnd, &rc) || rc.right - rc.left < 80 || rc.bottom - rc.top < 60)
+        return TRUE;
+    // EnumWindows walks top-level windows in z-order. The first eligible
+    // external window is the best approximation of the app behind Hawk's UI.
+    *selected = hwnd;
+    return FALSE;
+}
+
+HWND active_target_window() {
+    HWND foreground = GetForegroundWindow();
+    if (foreground) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(foreground, &pid);
+        if (pid != GetCurrentProcessId()) return foreground;
+    }
+    HWND selected = nullptr;
+    EnumWindows(target_window_enum, reinterpret_cast<LPARAM>(&selected));
+    // If no external app can be identified, fail closed instead of targeting Hawk's own UI.
+    return selected;
+}
+
 HWND find_window(const std::string& needle) {
     std::wstring want = wide(needle);
     HWND fallback = nullptr;

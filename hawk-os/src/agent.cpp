@@ -4,6 +4,7 @@
 #include "hawk.h"
 
 #include <shellapi.h>
+#include <algorithm>
 #include <winhttp.h>
 
 #include <cstdio>
@@ -14,6 +15,29 @@ namespace hawk {
 
 // ------------------------------------------------------------------ logging --
 static std::string log_path() { return app_dir() + "\\hawk.log"; }
+
+// Crash-diagnostic checkpoint: deliberately records progress metadata only,
+// never command arguments, typed text, screenshots, credentials, or file data.
+// Replace the manifest atomically so a crash cannot leave half-written JSON.
+static void write_run_checkpoint(const char* status, int attempted_steps, size_t next_offset) {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    const std::string path = app_dir() + "\\run-checkpoint.json";
+    const std::string temp = path + ".tmp";
+    FILE* f = fopen(temp.c_str(), "wb");
+    if (!f) return;
+    fprintf(f,
+            "{\"schema_version\":1,\"status\":\"%s\","
+            "\"attempted_steps\":%d,\"next_script_offset\":%llu,"
+            "\"updated_at\":\"%04d-%02d-%02dT%02d:%02d:%02d\"}\n",
+            status, attempted_steps, static_cast<unsigned long long>(next_offset),
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    const bool closed = fclose(f) == 0;
+    if (!closed || !MoveFileExA(temp.c_str(), path.c_str(),
+                                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileA(temp.c_str());
+    }
+}
 
 void Agent::log(const std::string& level, const std::string& text) {
     LogLine line{level, text};
@@ -42,8 +66,16 @@ Agent::Agent(Config cfg) : config(cfg) {
 
 Agent::~Agent() = default;
 
+static int bounded_ms(int value, int fallback, int maximum = 30000) {
+    if (value < 0) return fallback;
+    if (value == 0) return 0;
+    if (value > maximum) return maximum;
+    return value;
+}
+
 static void sleep_ms(int ms) {
     // Awake often enough that ESC / the STOP button is noticed quickly.
+    // Callers clamp externally supplied durations before reaching this helper.
     while (ms > 0) {
         int slice = ms > 50 ? 50 : ms;
         Sleep(slice);
@@ -113,6 +145,55 @@ static std::string expand_path(const std::string& raw) {
     std::string dir = app_dir() + "\\workspace";
     CreateDirectoryA(dir.c_str(), nullptr);
     return dir + "\\" + p;
+}
+
+// Resolve file commands inside Hawk's workspace only. The model can see
+// screen content and may encounter prompt injection; never let a generated
+// file command silently target arbitrary user-profile or system files.
+static bool workspace_file_path(const std::string& raw, std::string* resolved) {
+    if (raw.empty() || raw[0] == '~' || raw[0] == '/' || raw[0] == '\\' ||
+        raw.find(':') != std::string::npos) return false;
+    std::string rel = raw;
+    for (char& c : rel) if (c == '/') c = '\\';
+    size_t pos = 0;
+    while (pos <= rel.size()) {
+        size_t end = rel.find('\\', pos);
+        std::string part = rel.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        if (part == ".." || part == "." || part.empty()) return false;
+        if (end == std::string::npos) break;
+        pos = end + 1;
+    }
+
+    std::string root = app_dir() + "\\workspace";
+    CreateDirectoryA(root.c_str(), nullptr);
+    std::string candidate = root + "\\" + rel;
+    char full_root[4096] = {}, full_candidate[4096] = {};
+    DWORD root_len = GetFullPathNameA(root.c_str(), sizeof(full_root), full_root, nullptr);
+    DWORD candidate_len = GetFullPathNameA(candidate.c_str(), sizeof(full_candidate), full_candidate, nullptr);
+    if (!root_len || root_len >= sizeof(full_root) || !candidate_len ||
+        candidate_len >= sizeof(full_candidate)) return false;
+    std::string base(full_root), full(full_candidate);
+    while (base.size() > 3 && (base.back() == '\\' || base.back() == '/')) base.pop_back();
+    DWORD root_attr = GetFileAttributesA(base.c_str());
+    if (root_attr == INVALID_FILE_ATTRIBUTES || (root_attr & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    if (full.size() <= base.size() ||
+        _strnicmp(full.c_str(), base.c_str(), base.size()) != 0 ||
+        (full[base.size()] != '\\' && full[base.size()] != '/')) return false;
+
+    // Refuse existing reparse-point ancestors (junctions/symlinks) so a
+    // workspace symlink cannot trivially redirect file operations elsewhere.
+    std::string walk = base;
+    size_t at = base.size() + 1;
+    while (at <= full.size()) {
+        size_t end = full.find('\\', at);
+        walk += "\\" + full.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        DWORD attr = GetFileAttributesA(walk.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    *resolved = full;
+    return true;
 }
 
 static void substitute(std::string& line, const Point& found, bool has_found,
@@ -238,6 +319,11 @@ bool Agent::look() {
                   std::to_string(els.size()) + " control(s) detected" +
                   (last_shot_.empty() ? "" : (", screenshot " + last_shot_)));
     log("info", visual_report(img));
+    HWND ui_target = active_target_window();
+    std::string accessible = describe_accessible_controls(ui_target, 40);
+    if (ui_target)
+        log("info", "UI Automation target window: \"" + narrow(window_title(ui_target)) + "\"");
+    if (!accessible.empty()) log("info", "Windows accessibility controls:\n" + accessible);
     if (!els.empty())
         log("info", "click the top control with: click " +
                         std::to_string(els[0].rect.x + els[0].rect.w / 2) + " " +
@@ -255,7 +341,10 @@ bool Agent::run_script(const std::string& script) {
 
     log("info", "run start: " + std::to_string(split_words(script).size()) + " token(s) of input");
     int executed = 0, failed = 0;
+    const int step_limit = config.max_steps > 0 ? config.max_steps : 150;
+    const char* checkpoint_status = "running";
     size_t pos = 0;
+    if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
     while (pos <= script.size()) {
         size_t nl = script.find('\n', pos);
         std::string line = script.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
@@ -270,19 +359,42 @@ bool Agent::run_script(const std::string& script) {
         }
         if (abort_requested()) {
             log("warn", "aborted by user (ESC or STOP)");
+            checkpoint_status = "aborted";
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
             failed++;
             break;
         }
-        if (config.step_delay_ms > 0) sleep_ms(config.step_delay_ms);
+        if (executed >= step_limit) {
+            log("fail", "run stopped: command limit reached (" + std::to_string(step_limit) +
+                        "); split the task into smaller scripts");
+            checkpoint_status = "limit_reached";
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
+            failed++;
+            break;
+        }
+        if (config.step_delay_ms > 0) sleep_ms(bounded_ms(config.step_delay_ms, 350));
+        if (abort_requested()) {
+            log("warn", "aborted by user during step delay");
+            checkpoint_status = "aborted";
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
+            failed++;
+            break;
+        }
         executed++;
         if (!step(t, 0)) {
             failed++;
             log("fail", "step failed: " + t);
+            checkpoint_status = "failed";
+            if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
             if (config.dry_run) continue;
             log("warn", "stopping: a failed step means the state is no longer what the script expects");
             break;
         }
+        if (!config.dry_run) write_run_checkpoint("running", executed, pos);
     }
+    if (failed == 0) checkpoint_status = "completed";
+    else if (std::string(checkpoint_status) == "running") checkpoint_status = "failed";
+    if (!config.dry_run) write_run_checkpoint(checkpoint_status, executed, pos);
     if (config.restore_cursor) restore_cursor_origin();
     char buf[160];
     snprintf(buf, sizeof(buf), "run end: %d step(s), %d failure(s)", executed, failed);
@@ -326,6 +438,126 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // the whole tail of the line after i tokens, quotes stripped
         return remainder_after(line, (int)i);
     };
+
+    // Fail closed for actions with clear destructive or external side effects.
+    // Screen content can contain prompt injection, so auto-run is not consent.
+    std::string sensitive_reason;
+    if (cmd == "del" || cmd == "rm" || cmd == "delete") {
+        sensitive_reason = "Delete a file from Hawk's workspace";
+    } else if (cmd == "close") {
+        sensitive_reason = "Close a running application/window";
+    } else if (cmd == "uia" && a.size() > 2) {
+        const std::string operation = to_lower(a[1]);
+        const std::string target = to_lower(a[2]);
+        const char* risky_words[] = {"delete", "remove", "send", "submit", "purchase",
+            "pay", "transfer", "publish", "share", "reset", "shutdown", "format",
+            "uninstall", "confirm", "accept", "allow", "install", "sign out", "log out",
+            "overwrite", "replace", "execute", "grant", "trust"};
+        if (operation == "invoke" || operation == "click" || operation == "select" ||
+            operation == "toggle") {
+            const bool generic_confirmation = target == "yes" || target == "ok" ||
+                target == "okay" || target == "proceed" || target == "continue" ||
+                target == "run" || target == "enable" ||
+                target.find("continue anyway") != std::string::npos;
+            if (generic_confirmation) {
+                sensitive_reason = "Confirm a potentially high-impact UI action: " + a[2];
+            } else {
+                for (const char* word : risky_words) {
+                    if (target.find(word) != std::string::npos) {
+                        sensitive_reason = "Activate a potentially high-impact UI control: " + a[2];
+                        break;
+                    }
+                }
+            }
+        } else if (operation == "set" &&
+                   (target.find("password") != std::string::npos ||
+                    target.find("passcode") != std::string::npos ||
+                    target.find("secret") != std::string::npos ||
+                    target.find("token") != std::string::npos ||
+                    target.find("api key") != std::string::npos ||
+                    target.find("credential") != std::string::npos ||
+                    target.find("credit card") != std::string::npos)) {
+            sensitive_reason = "Enter a credential or payment value into a UI control";
+        }
+    } else if (cmd == "open") {
+        std::string target = to_lower(trim(rest(1)));
+        static const char* safe_apps[] = {"notepad", "calc", "mspaint", "explorer",
+            "taskmgr", "cmd", "chrome", "msedge", "code", "notepad++", "settings"};
+        bool known_safe = false;
+        for (const char* app : safe_apps) if (target == app) known_safe = true;
+        if (!known_safe) sensitive_reason = "Launch an external file, application, URL, or system target";
+    } else if (cmd == "key" && a.size() > 1) {
+        std::string combo = to_lower(a[1]);
+        if (combo.find("alt+f4") != std::string::npos ||
+            combo.find("ctrl+alt") != std::string::npos ||
+            combo.find("ctrl+shift+esc") != std::string::npos ||
+            combo.find("win+") != std::string::npos ||
+            combo == "ctrl+w" || combo == "ctrl+q") {
+            sensitive_reason = "Use a system-level or application-closing keyboard shortcut";
+        }
+    }
+    if (!sensitive_reason.empty() && !config.allow_sensitive_actions) {
+        std::string details = raw_line;
+        // Never show a credential/payment value in an approval dialog or audit log.
+        if (cmd == "uia" && a.size() > 3 && to_lower(a[1]) == "set") {
+            details = "uia set \"" + a[2] + "\" [value redacted]";
+        }
+        if (details.size() > 220) details.resize(220);
+        bool approved = on_approval && on_approval(sensitive_reason, details);
+        if (!approved) {
+            log("warn", "blocked sensitive action (not approved): " + sensitive_reason);
+            return false;
+        }
+        log("info", "sensitive action approved for this step: " + sensitive_reason);
+    }
+
+    // Semantic UI Automation targets named controls in the foreground app and
+    // uses the control's native pattern before resorting to screen coordinates.
+    if (cmd == "uia") {
+        if (!need(2)) return false;
+        const std::string operation = to_lower(a[1]);
+        static const char* supported[] = {"invoke", "click", "set", "toggle", "select",
+                                          "expand", "collapse", "focus", "wait"};
+        bool known_action = false;
+        for (const char* name : supported) if (operation == name) known_action = true;
+        if (!known_action) {
+            log("fail", "uia: unsupported action; use invoke, set, toggle, select, expand, collapse, focus or wait");
+            return false;
+        }
+        if (operation == "set" && !need(3)) return false;
+        const std::string target_name = a[2];
+        const std::string value = operation == "set" ? rest(3) : "";
+        if (config.dry_run) {
+            log("action", "uia " + operation + " control \"" + target_name + "\" (dry-run)");
+            return true;
+        }
+        std::string result;
+        if (operation == "wait") {
+            int timeout_ms = a.size() > 3 ? number(3, 5000) : 5000;
+            if (timeout_ms < 0) timeout_ms = 0;
+            if (timeout_ms > 30000) timeout_ms = 30000;
+            int waited = 0;
+            while (waited <= timeout_ms && !abort_requested()) {
+                if (act_accessible_control(active_target_window(), "exists", target_name, "", &result)) {
+                    log("ok", "uia wait found \"" + target_name + "\" after " +
+                              std::to_string(waited) + " ms");
+                    return true;
+                }
+                if (waited == timeout_ms) break;
+                sleep_ms(std::min(100, timeout_ms - waited));
+                waited += std::min(100, timeout_ms - waited);
+            }
+            log("fail", abort_requested() ? "uia wait aborted" :
+                       "uia wait timed out waiting for \"" + target_name + "\"");
+            return false;
+        }
+        if (!act_accessible_control(active_target_window(), operation, target_name, value, &result)) {
+            log("fail", "uia " + operation + " \"" + target_name + "\": " + result);
+            return false;
+        }
+        log("ok", "uia " + operation + " control \"" + target_name + "\": " + result);
+        return true;
+    }
 
     // ---- seeing ----
     if (cmd == "shot") {
@@ -597,15 +829,17 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (!need(1)) return false;
         std::string text = unescape(rest(1));
         if (config.dry_run) {
-            log("action", "type \"" + text + "\" (dry-run)");
+            log("action", "type (" + std::to_string(text.size()) +
+                          " character(s), content redacted; dry-run)");
             return true;
         }
         if (!type_text(wide(text), &err)) {
             log("fail", "type: " + err);
             return false;
         }
-        log("ok", "typed " + std::to_string(text.size()) + " char(s): " +
-                      text.substr(0, 60).append(text.size() > 60 ? "..." : ""));
+        // Never echo typed content into logs: it may contain personal data or
+        // credentials intended for the focused application.
+        log("ok", "typed " + std::to_string(text.size()) + " character(s) (content redacted)");
         return true;
     }
     if (cmd == "key") {
@@ -678,7 +912,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         return true;
     }
     if (cmd == "wait" || cmd == "sleep") {
-        int ms = need(1) ? number(1, 500) : 500;
+        int ms = bounded_ms(need(1) ? number(1, 500) : 500, 500);
         log("info", (config.dry_run ? "(dry-run) " : "") + std::string("waiting ") +
                         std::to_string(ms) + " ms");
         if (!config.dry_run) sleep_ms(ms);
@@ -690,7 +924,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // passes the file to the dying instance and no window ever appears.
         if (!need(1)) return false;
         std::string needle = a[1];
-        int timeout = a.size() > 2 ? number(2, 10000) : 10000;
+        int timeout = bounded_ms(a.size() > 2 ? number(2, 10000) : 10000, 10000);
         if (config.dry_run) {
             log("action", "waitclose " + needle + " (dry-run)");
             return true;
@@ -716,7 +950,7 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // own startup the way `open` + `focus` can.
         if (!need(1)) return false;
         std::string needle = a[1];
-        int timeout = a.size() > 2 ? number(2, 20000) : 20000;
+        int timeout = bounded_ms(a.size() > 2 ? number(2, 20000) : 20000, 20000);
         if (config.dry_run) {
             log("action", "waitfocus " + needle + " (dry-run)");
             return true;
@@ -951,19 +1185,37 @@ bool Agent::step(const std::string& raw_line, int depth) {
     // ---- files ----
     if (cmd == "write") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "write: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
+        DWORD existing = GetFileAttributesA(path.c_str());
+        if (existing != INVALID_FILE_ATTRIBUTES) {
+            log("fail", "write: refusing to overwrite an existing workspace file; use del explicitly first: " + path);
+            return false;
+        }
         std::string body = a.size() > 2 ? unescape(rest(2)) : "";
         if (config.dry_run) {
             log("action", "write " + path + " (" + std::to_string(body.size()) + " bytes, dry-run)");
             return true;
         }
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) {
-            log("fail", "write: cannot open " + path);
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            log("fail", "write: cannot create a new file at " + path + " (error " +
+                            std::to_string(GetLastError()) + ")");
             return false;
         }
-        fwrite(body.data(), 1, body.size(), f);
-        fclose(f);
+        DWORD written = 0;
+        BOOL ok = body.empty() || WriteFile(file, body.data(), static_cast<DWORD>(body.size()),
+                                            &written, nullptr);
+        CloseHandle(file);
+        if (!ok || written != body.size()) {
+            DeleteFileA(path.c_str());
+            log("fail", "write: incomplete write to " + path);
+            return false;
+        }
         log("ok", "wrote " + std::to_string(body.size()) + " bytes to " + path);
         return true;
     }
@@ -971,7 +1223,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
         // Create a file only when it is missing - so "open a text file called
         // X" never clobbers an X that already exists.
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "ensure: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         DWORD attr = GetFileAttributesA(path.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
             log("info", "ensure: " + path + " already exists, leaving it alone");
@@ -983,19 +1239,36 @@ bool Agent::step(const std::string& raw_line, int depth) {
                               " bytes, dry-run)");
             return true;
         }
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) {
-            log("fail", "ensure: cannot open " + path);
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            DWORD error = GetLastError();
+            if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS) {
+                log("info", "ensure: " + path + " already exists, leaving it alone");
+                return true;
+            }
+            log("fail", "ensure: cannot create " + path + " (error " + std::to_string(error) + ")");
             return false;
         }
-        fwrite(body.data(), 1, body.size(), f);
-        fclose(f);
+        DWORD written = 0;
+        BOOL ok = body.empty() || WriteFile(file, body.data(), static_cast<DWORD>(body.size()),
+                                            &written, nullptr);
+        CloseHandle(file);
+        if (!ok || written != body.size()) {
+            DeleteFileA(path.c_str());
+            log("fail", "ensure: incomplete write to " + path);
+            return false;
+        }
         log("ok", "created " + path + " (" + std::to_string(body.size()) + " bytes)");
         return true;
     }
     if (cmd == "read") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "read: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         FILE* f = fopen(path.c_str(), "rb");
         if (!f) {
             log("fail", "read: cannot open " + path);
@@ -1012,7 +1285,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
     }
     if (cmd == "mkdir") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "mkdir: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         if (config.dry_run) {
             log("action", "mkdir " + path + " (dry-run)");
             return true;
@@ -1026,7 +1303,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
     }
     if (cmd == "del" || cmd == "rm" || cmd == "delete") {
         if (!need(1)) return false;
-        std::string path = expand_path(a[1]);
+        std::string path;
+        if (!workspace_file_path(a[1], &path)) {
+            log("fail", "del: path must stay inside Hawk's workspace (no absolute paths, ~, or ..)");
+            return false;
+        }
         if (config.dry_run) {
             log("action", "del " + path + " (dry-run)");
             return true;
@@ -1094,44 +1375,193 @@ static std::string json_escape(const std::string& s) {
     return out;
 }
 
-// Pull the "content" string out of an OpenAI-compatible chat completion.
-static std::string extract_content(const std::string& body) {
-    size_t key = body.find("\"content\"");
-    while (key != std::string::npos) {
-        size_t colon = body.find(':', key);
-        if (colon == std::string::npos) break;
-        size_t i = colon + 1;
-        while (i < body.size() && isspace((unsigned char)body[i])) i++;
-        if (i < body.size() && body[i] == '"') {
-            std::string out;
-            for (i++; i < body.size(); i++) {
-                char c = body[i];
-                if (c == '\\' && i + 1 < body.size()) {
-                    char n = body[++i];
-                    if (n == 'n') out.push_back('\n');
-                    else if (n == 't') out.push_back('\t');
-                    else if (n == 'r') out.push_back('\r');
-                    else if (n == 'u') {
-                        if (i + 4 < body.size()) {
-                            int code = (int)strtol(body.substr(i + 1, 4).c_str(), nullptr, 16);
-                            i += 4;
-                            if (code < 128) out.push_back((char)code);
-                            else out += "?";  // non-latin escapes are rare in command output
-                        }
-                    } else {
-                        out.push_back(n);
-                    }
-                } else if (c == '"') {
-                    return out;
-                } else {
-                    out.push_back(c);
-                }
-            }
-            return out;
-        }
-        key = body.find("\"content\"", key + 1);
+// Small, strict JSON reader for the one response shape Hawk consumes. It
+// walks JSON structure (rather than searching raw text for "content") and
+// decodes UTF-16 surrogate pairs into UTF-8.
+static void append_utf8(std::string* out, unsigned long cp) {
+    if (cp <= 0x7F) out->push_back(static_cast<char>(cp));
+    else if (cp <= 0x7FF) {
+        out->push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0xFFFF) {
+        out->push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0x10FFFF) {
+        out->push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out->push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
     }
-    return "";
+}
+
+static bool json_hex4(const std::string& s, size_t at, unsigned long* value) {
+    if (at + 4 > s.size()) return false;
+    unsigned long n = 0;
+    for (size_t i = at; i < at + 4; ++i) {
+        char c = s[i];
+        int d = c >= '0' && c <= '9' ? c - '0' :
+                c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+                c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        if (d < 0) return false;
+        n = (n << 4) | static_cast<unsigned long>(d);
+    }
+    *value = n;
+    return true;
+}
+
+static void json_ws(const std::string& s, size_t* p) {
+    while (*p < s.size() && isspace(static_cast<unsigned char>(s[*p]))) ++*p;
+}
+
+static bool json_string(const std::string& s, size_t* p, std::string* out) {
+    json_ws(s, p);
+    if (*p >= s.size() || s[*p] != '"') return false;
+    ++*p;
+    out->clear();
+    while (*p < s.size()) {
+        unsigned char c = static_cast<unsigned char>(s[(*p)++]);
+        if (c == '"') return true;
+        if (c < 0x20) return false;
+        if (c != '\\') { out->push_back(static_cast<char>(c)); continue; }
+        if (*p >= s.size()) return false;
+        char e = s[(*p)++];
+        switch (e) {
+            case '"': out->push_back('"'); break;
+            case '\\': out->push_back('\\'); break;
+            case '/': out->push_back('/'); break;
+            case 'b': out->push_back('\b'); break;
+            case 'f': out->push_back('\f'); break;
+            case 'n': out->push_back('\n'); break;
+            case 'r': out->push_back('\r'); break;
+            case 't': out->push_back('\t'); break;
+            case 'u': {
+                unsigned long cp = 0;
+                if (!json_hex4(s, *p, &cp)) return false;
+                *p += 4;
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    if (*p + 6 > s.size() || s[*p] != '\\' || s[*p + 1] != 'u') return false;
+                    unsigned long low = 0;
+                    if (!json_hex4(s, *p + 2, &low) || low < 0xDC00 || low > 0xDFFF) return false;
+                    *p += 6;
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                    return false;
+                }
+                append_utf8(out, cp);
+                break;
+            }
+            default: return false;
+        }
+    }
+    return false;
+}
+
+static bool json_skip_value(const std::string& s, size_t* p, int depth = 0) {
+    if (depth > 64) return false;
+    json_ws(s, p);
+    if (*p >= s.size()) return false;
+    if (s[*p] == '"') { std::string ignored; return json_string(s, p, &ignored); }
+    if (s[*p] == '{') {
+        ++*p; json_ws(s, p);
+        if (*p < s.size() && s[*p] == '}') { ++*p; return true; }
+        while (*p < s.size()) {
+            std::string key;
+            if (!json_string(s, p, &key)) return false;
+            json_ws(s, p);
+            if (*p >= s.size() || s[(*p)++] != ':') return false;
+            if (!json_skip_value(s, p, depth + 1)) return false;
+            json_ws(s, p);
+            if (*p < s.size() && s[*p] == '}') { ++*p; return true; }
+            if (*p >= s.size() || s[(*p)++] != ',') return false;
+            json_ws(s, p);
+        }
+        return false;
+    }
+    if (s[*p] == '[') {
+        ++*p; json_ws(s, p);
+        if (*p < s.size() && s[*p] == ']') { ++*p; return true; }
+        while (*p < s.size()) {
+            if (!json_skip_value(s, p, depth + 1)) return false;
+            json_ws(s, p);
+            if (*p < s.size() && s[*p] == ']') { ++*p; return true; }
+            if (*p >= s.size() || s[(*p)++] != ',') return false;
+            json_ws(s, p);
+        }
+        return false;
+    }
+    size_t begin = *p;
+    while (*p < s.size() && s[*p] != ',' && s[*p] != ']' && s[*p] != '}' &&
+           !isspace(static_cast<unsigned char>(s[*p]))) ++*p;
+    if (*p == begin) return false;
+    std::string atom = s.substr(begin, *p - begin);
+    if (atom == "true" || atom == "false" || atom == "null") return true;
+
+    // Strict JSON-number grammar: reject leading +, leading zeroes, and
+    // incomplete fractions/exponents instead of accepting number-ish tokens.
+    size_t i = 0;
+    if (i < atom.size() && atom[i] == '-') ++i;
+    if (i >= atom.size()) return false;
+    if (atom[i] == '0') {
+        ++i;
+        if (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) return false;
+    } else {
+        if (atom[i] < '1' || atom[i] > '9') return false;
+        while (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) ++i;
+    }
+    if (i < atom.size() && atom[i] == '.') {
+        ++i;
+        size_t digits = i;
+        while (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) ++i;
+        if (i == digits) return false;
+    }
+    if (i < atom.size() && (atom[i] == 'e' || atom[i] == 'E')) {
+        ++i;
+        if (i < atom.size() && (atom[i] == '+' || atom[i] == '-')) ++i;
+        size_t digits = i;
+        while (i < atom.size() && isdigit(static_cast<unsigned char>(atom[i]))) ++i;
+        if (i == digits) return false;
+    }
+    return i == atom.size();
+}
+
+static bool json_member(const std::string& s, size_t object, const char* wanted,
+                        size_t* value_at) {
+    size_t p = object;
+    json_ws(s, &p);
+    if (p >= s.size() || s[p++] != '{') return false;
+    json_ws(s, &p);
+    if (p < s.size() && s[p] == '}') return false;
+    while (p < s.size()) {
+        std::string key;
+        if (!json_string(s, &p, &key)) return false;
+        json_ws(s, &p);
+        if (p >= s.size() || s[p++] != ':') return false;
+        json_ws(s, &p);
+        if (key == wanted) { *value_at = p; return true; }
+        if (!json_skip_value(s, &p)) return false;
+        json_ws(s, &p);
+        if (p < s.size() && s[p] == '}') return false;
+        if (p >= s.size() || s[p++] != ',') return false;
+        json_ws(s, &p);
+    }
+    return false;
+}
+
+static std::string extract_content(const std::string& body) {
+    size_t choices = 0;
+    if (!json_member(body, 0, "choices", &choices)) return "";
+    json_ws(body, &choices);
+    if (choices >= body.size() || body[choices++] != '[') return "";
+    json_ws(body, &choices);
+    if (choices >= body.size() || body[choices] != '{') return "";
+    size_t message = 0;
+    if (!json_member(body, choices, "message", &message)) return "";
+    size_t content = 0;
+    if (!json_member(body, message, "content", &content)) return "";
+    std::string result;
+    if (!json_string(body, &content, &result)) return "";
+    return result;
 }
 
 struct ParsedUrl {
@@ -1179,6 +1609,18 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
         *err = "no API key set";
         return false;
     }
+    if (!image_b64.empty() && !config.allow_screen_upload) {
+        *err = "screen upload blocked: explicitly approve screenshot sharing for this run";
+        return false;
+    }
+    if (!url.secure) {
+        const std::string host = to_lower(narrow(url.host));
+        const bool loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
+        if (!loopback) {
+            *err = "refusing to send an API key over unencrypted HTTP; use HTTPS";
+            return false;
+        }
+    }
 
     std::string content;
     if (!image_b64.empty()) {
@@ -1200,7 +1642,7 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
         *err = "WinHttpOpen failed (" + std::to_string(GetLastError()) + ")";
         return false;
     }
-    WinHttpSetTimeouts(session, 10000, 30000, 120000, 120000);
+    WinHttpSetTimeouts(session, 10000, 10000, 30000, 30000);
 
     HINTERNET conn = WinHttpConnect(session, url.host.c_str(), url.port, 0);
     if (!conn) {
@@ -1256,20 +1698,31 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
 
     std::string data;
     DWORD avail = 0;
+    bool aborted = false, read_failed = false, response_too_large = false;
     do {
+        if (abort_requested()) { aborted = true; break; }
         avail = 0;
-        if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+        if (!WinHttpQueryDataAvailable(req, &avail)) { read_failed = true; break; }
+        if (avail == 0) break;
+        if (data.size() + static_cast<size_t>(avail) > 8u * 1024 * 1024) {
+            response_too_large = true;
+            break;
+        }
         std::string chunk(avail, '\0');
         DWORD read = 0;
-        if (!WinHttpReadData(req, chunk.data(), avail, &read) || read == 0) break;
+        if (!WinHttpReadData(req, chunk.data(), avail, &read)) { read_failed = true; break; }
+        if (read == 0) break;
         chunk.resize(read);
         data += chunk;
-        if (data.size() > 8u * 1024 * 1024) break;
     } while (avail > 0);
 
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(session);
+
+    if (aborted) { *err = "request stopped by user"; return false; }
+    if (read_failed) { *err = "failed while reading model response"; return false; }
+    if (response_too_large) { *err = "model response exceeded the 8 MiB safety limit"; return false; }
 
     if (status != 200) {
         std::string snippet = data.substr(0, 300);
@@ -1316,7 +1769,7 @@ std::vector<std::string> Agent::parse_commands(const std::string& reply) {
                                      "clickel", "move", "click", "drag", "scroll", "type", "key",
                                      "focus", "open", "close", "wait", "waitclose", "waitfocus",
                                      "sleep", "pixel", "find", "findarea", "verifypixel", "smove",
-                                     "sclick", "sdrag", "windows", "cursor", "monitors", "write",
+                                     "sclick", "sdrag", "uia", "windows", "cursor", "monitors", "write",
                                      "read", "mkdir", "ensure", "del", "rm", "delete", "log", "note",
                                      "echo", "try", "done"};
         bool known = false;
@@ -1354,6 +1807,11 @@ static std::string command_reference() {
         "look                             read the screen: detect controls, report them\n"
         "elements [x y w h]               list the controls detected (in a region)\n"
         "clickel <rank> [right|double]    click the Nth detected control\n"
+        "uia invoke|click <name>          activate a uniquely named Windows control\n"
+        "uia set <name> <value>           set a control's accessible value\n"
+        "uia toggle|select|expand|collapse|focus <name>\n"
+        "uia wait <name> [timeout_ms]     wait for an accessible control to appear\n"
+        "                                 prefer semantic controls over guessed coordinates\n"
         "move x y | move rel dx dy        move the real cursor\n"
         "click [left|right|double|triple] [x y]   real click (optionally after moving)\n"
         "drag x1 y1 x2 y2                 press, move, release\n"
@@ -1794,6 +2252,10 @@ bool Agent::run_goal(const std::string& goal) {
             for (const std::string& c : local) log("agent", "planned: " + c);
             std::string script = join_commands(local);
             publish_script(script);
+            if (!config.auto_run) {
+                log("warn", "auto-run is off; the local plan was saved for review and nothing was executed");
+                return false;
+            }
             return run_script(script);
         }
         // A goal that is already a script still works verbatim.
@@ -1847,6 +2309,11 @@ bool Agent::run_goal(const std::string& goal) {
         Rect v = virtual_desktop();
         remember_map(small, v);  // sclick/smove now aim in this screenshot's pixel space
         *analysis = visual_report(small);
+        HWND ui_target = active_target_window();
+        if (ui_target)
+            *analysis += "\nUI Automation target window: \"" + narrow(window_title(ui_target)) + "\"\n";
+        std::string accessible = describe_accessible_controls(ui_target, 40);
+        if (!accessible.empty()) *analysis += "\nWindows accessibility controls:\n" + accessible;
         shot_w = small.w;
         shot_h = small.h;
         // A labelled grid lets the model read coordinates off the image itself;
@@ -1916,7 +2383,12 @@ bool Agent::run_goal(const std::string& goal) {
              "- To re-read the screen yourself, use `look` (Hawk analyses the screenshot and "
              "reports the controls it detects) or `elements`.\n"
              "- Prefer the visible controls listed in the analysis below; they were detected "
-             "from this very screenshot, not invented.\n";
+             "from this very screenshot, not invented.\n"
+             "- If the Windows accessibility list names the intended control, prefer semantic "
+             "UIA actions such as uia invoke \"Exact control name\" or uia set \"Field name\" \"value\" "
+             "over coordinate clicks. Use only accessible names actually listed. If a name is "
+             "ambiguous or the action pattern is unavailable, fall back to screenshot-grounded coordinates. "
+             "Use `uia wait \"Control name\"` to wait for dialogs or dynamic controls before acting.\n";
         return s;
     };
 
@@ -2090,6 +2562,13 @@ bool Agent::run_goal(const std::string& goal) {
                 force_check = true;
                 log("warn", "a plan step failed - asking the model what to do next instead of "
                             "ploughing on");
+                break;
+            }
+            // Semantic actions change control state directly. Re-observe and ask
+            // the model to verify before continuing with the next planned action.
+            if (to_lower(trim(c)).rfind("uia ", 0) == 0) {
+                force_check = true;
+                log("info", "semantic action complete; verifying the resulting desktop state");
                 break;
             }
         }
