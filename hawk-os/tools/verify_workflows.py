@@ -86,6 +86,21 @@ def main():
         ok = r.returncode != 0 and "1 MiB size limit" in output
         print(f"oversized workflow is rejected: {'PASS' if ok else 'FAIL'}")
         failures += not ok
+
+        logic = 'set app Notepad\nif app == Notepad\nlog PHASE_B_BRANCH_TRUE\nelse\nlog PHASE_B_BRANCH_FALSE\nendif\nlog APP_$app'
+        r = run("--dry-run", "--run", logic)
+        output = r.stdout + r.stderr
+        ok = (r.returncode == 0 and "PHASE_B_BRANCH_TRUE" in output
+              and "PHASE_B_BRANCH_FALSE" not in output and "APP_Notepad" in output)
+        print(f"workflow variables and branches: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
+        r = run("--dry-run", "--run", "log PHASE_B_MALFORMED\nif x == y\nlog MUST_NOT_RUN")
+        output = r.stdout + r.stderr
+        ok = (r.returncode != 0 and "unclosed if block" in output
+              and "PHASE_B_MALFORMED" not in output and "MUST_NOT_RUN" not in output)
+        print(f"malformed branch fails before execution: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
     finally:
         for path in paths:
             try:
@@ -97,7 +112,7 @@ def main():
             except OSError:
                 pass
 
-    print(f"\n{6 - failures}/6 workflow checks passed")
+    print(f"\n{8 - failures}/8 workflow checks passed")
     return 1 if failures else 0
 
 
