@@ -402,6 +402,15 @@ bool Agent::step(const std::string& raw_line, int depth) {
                     break;
                 }
             }
+        } else if (operation == "set" &&
+                   (target.find("password") != std::string::npos ||
+                    target.find("passcode") != std::string::npos ||
+                    target.find("secret") != std::string::npos ||
+                    target.find("token") != std::string::npos ||
+                    target.find("api key") != std::string::npos ||
+                    target.find("credential") != std::string::npos ||
+                    target.find("credit card") != std::string::npos)) {
+            sensitive_reason = "Enter a credential or payment value into a UI control";
         }
     } else if (cmd == "open") {
         std::string target = to_lower(trim(rest(1)));
@@ -437,11 +446,11 @@ bool Agent::step(const std::string& raw_line, int depth) {
         if (!need(2)) return false;
         const std::string operation = to_lower(a[1]);
         static const char* supported[] = {"invoke", "click", "set", "toggle", "select",
-                                          "expand", "collapse", "focus"};
+                                          "expand", "collapse", "focus", "wait"};
         bool known_action = false;
         for (const char* name : supported) if (operation == name) known_action = true;
         if (!known_action) {
-            log("fail", "uia: unsupported action; use invoke, set, toggle, select, expand, collapse or focus");
+            log("fail", "uia: unsupported action; use invoke, set, toggle, select, expand, collapse, focus or wait");
             return false;
         }
         if (operation == "set" && !need(3)) return false;
@@ -452,6 +461,25 @@ bool Agent::step(const std::string& raw_line, int depth) {
             return true;
         }
         std::string result;
+        if (operation == "wait") {
+            int timeout_ms = a.size() > 3 ? number(3, 5000) : 5000;
+            if (timeout_ms < 0) timeout_ms = 0;
+            if (timeout_ms > 30000) timeout_ms = 30000;
+            int waited = 0;
+            while (waited <= timeout_ms && !abort_requested()) {
+                if (act_accessible_control(active_target_window(), "exists", target_name, "", &result)) {
+                    log("ok", "uia wait found \"" + target_name + "\" after " +
+                              std::to_string(waited) + " ms");
+                    return true;
+                }
+                if (waited == timeout_ms) break;
+                sleep_ms(std::min(100, timeout_ms - waited));
+                waited += std::min(100, timeout_ms - waited);
+            }
+            log("fail", abort_requested() ? "uia wait aborted" :
+                       "uia wait timed out waiting for \"" + target_name + "\"");
+            return false;
+        }
         if (!act_accessible_control(active_target_window(), operation, target_name, value, &result)) {
             log("fail", "uia " + operation + " \"" + target_name + "\": " + result);
             return false;
@@ -1710,6 +1738,7 @@ static std::string command_reference() {
         "uia invoke|click <name>          activate a uniquely named Windows control\n"
         "uia set <name> <value>           set a control's accessible value\n"
         "uia toggle|select|expand|collapse|focus <name>\n"
+        "uia wait <name> [timeout_ms]     wait for an accessible control to appear\n"
         "                                 prefer semantic controls over guessed coordinates\n"
         "move x y | move rel dx dy        move the real cursor\n"
         "click [left|right|double|triple] [x y]   real click (optionally after moving)\n"
@@ -2286,7 +2315,8 @@ bool Agent::run_goal(const std::string& goal) {
              "- If the Windows accessibility list names the intended control, prefer semantic "
              "UIA actions such as uia invoke \"Exact control name\" or uia set \"Field name\" \"value\" "
              "over coordinate clicks. Use only accessible names actually listed. If a name is "
-             "ambiguous or the action pattern is unavailable, fall back to screenshot-grounded coordinates.\n";
+             "ambiguous or the action pattern is unavailable, fall back to screenshot-grounded coordinates. "
+             "Use `uia wait \\\"Control name\\\"` to wait for dialogs or dynamic controls before acting.\n";
         return s;
     };
 
