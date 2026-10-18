@@ -33,7 +33,6 @@ static void read_ini(Config* cfg) {
         else if (k == "base_url") cfg->base_url = v;
         else if (k == "model") cfg->model = v;
         else if (k == "vision") cfg->vision = (v != "0");
-        else if (k == "auto_run") cfg->auto_run = (v != "0");
         else if (k == "dry_run") cfg->dry_run = (v == "1" || to_lower(v) == "true");
         else if (k == "step_delay_ms") { try { cfg->step_delay_ms = std::stoi(v); } catch (...) {} }
     }
