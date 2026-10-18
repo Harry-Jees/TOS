@@ -28,6 +28,9 @@ std::wstring wide(const std::string& utf8);
 std::string narrow(const std::wstring& utf16);
 std::string to_lower(std::string s);
 std::string trim(const std::string& s);
+// Protect API credentials with Windows DPAPI (current Windows user scope).
+std::string protect_secret(const std::string& plaintext);
+std::string unprotect_secret(const std::string& protected_hex);
 std::vector<std::string> split_words(const std::string& s, int max_parts = 0);
 std::wstring format_wide(const wchar_t* fmt, ...);
 std::string exe_dir();          // directory containing the running executable
