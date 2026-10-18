@@ -1160,44 +1160,167 @@ static std::string json_escape(const std::string& s) {
     return out;
 }
 
-// Pull the "content" string out of an OpenAI-compatible chat completion.
-static std::string extract_content(const std::string& body) {
-    size_t key = body.find("\"content\"");
-    while (key != std::string::npos) {
-        size_t colon = body.find(':', key);
-        if (colon == std::string::npos) break;
-        size_t i = colon + 1;
-        while (i < body.size() && isspace((unsigned char)body[i])) i++;
-        if (i < body.size() && body[i] == '"') {
-            std::string out;
-            for (i++; i < body.size(); i++) {
-                char c = body[i];
-                if (c == '\\' && i + 1 < body.size()) {
-                    char n = body[++i];
-                    if (n == 'n') out.push_back('\n');
-                    else if (n == 't') out.push_back('\t');
-                    else if (n == 'r') out.push_back('\r');
-                    else if (n == 'u') {
-                        if (i + 4 < body.size()) {
-                            int code = (int)strtol(body.substr(i + 1, 4).c_str(), nullptr, 16);
-                            i += 4;
-                            if (code < 128) out.push_back((char)code);
-                            else out += "?";  // non-latin escapes are rare in command output
-                        }
-                    } else {
-                        out.push_back(n);
-                    }
-                } else if (c == '"') {
-                    return out;
-                } else {
-                    out.push_back(c);
-                }
-            }
-            return out;
-        }
-        key = body.find("\"content\"", key + 1);
+// Small, strict JSON reader for the one response shape Hawk consumes. It
+// walks JSON structure (rather than searching raw text for "content") and
+// decodes UTF-16 surrogate pairs into UTF-8.
+static void append_utf8(std::string* out, unsigned long cp) {
+    if (cp <= 0x7F) out->push_back(static_cast<char>(cp));
+    else if (cp <= 0x7FF) {
+        out->push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0xFFFF) {
+        out->push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0x10FFFF) {
+        out->push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out->push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
     }
-    return "";
+}
+
+static bool json_hex4(const std::string& s, size_t at, unsigned long* value) {
+    if (at + 4 > s.size()) return false;
+    unsigned long n = 0;
+    for (size_t i = at; i < at + 4; ++i) {
+        char c = s[i];
+        int d = c >= '0' && c <= '9' ? c - '0' :
+                c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+                c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        if (d < 0) return false;
+        n = (n << 4) | static_cast<unsigned long>(d);
+    }
+    *value = n;
+    return true;
+}
+
+static void json_ws(const std::string& s, size_t* p) {
+    while (*p < s.size() && isspace(static_cast<unsigned char>(s[*p]))) ++*p;
+}
+
+static bool json_string(const std::string& s, size_t* p, std::string* out) {
+    json_ws(s, p);
+    if (*p >= s.size() || s[*p] != '"') return false;
+    ++*p;
+    out->clear();
+    while (*p < s.size()) {
+        unsigned char c = static_cast<unsigned char>(s[(*p)++]);
+        if (c == '"') return true;
+        if (c < 0x20) return false;
+        if (c != '\\') { out->push_back(static_cast<char>(c)); continue; }
+        if (*p >= s.size()) return false;
+        char e = s[(*p)++];
+        switch (e) {
+            case '"': out->push_back('"'); break;
+            case '\\': out->push_back('\\'); break;
+            case '/': out->push_back('/'); break;
+            case 'b': out->push_back('\b'); break;
+            case 'f': out->push_back('\f'); break;
+            case 'n': out->push_back('\n'); break;
+            case 'r': out->push_back('\r'); break;
+            case 't': out->push_back('\t'); break;
+            case 'u': {
+                unsigned long cp = 0;
+                if (!json_hex4(s, *p, &cp)) return false;
+                *p += 4;
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    if (*p + 6 > s.size() || s[*p] != '\\' || s[*p + 1] != 'u') return false;
+                    unsigned long low = 0;
+                    if (!json_hex4(s, *p + 2, &low) || low < 0xDC00 || low > 0xDFFF) return false;
+                    *p += 6;
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                    return false;
+                }
+                append_utf8(out, cp);
+                break;
+            }
+            default: return false;
+        }
+    }
+    return false;
+}
+
+static bool json_skip_value(const std::string& s, size_t* p, int depth = 0) {
+    if (depth > 64) return false;
+    json_ws(s, p);
+    if (*p >= s.size()) return false;
+    if (s[*p] == '"') { std::string ignored; return json_string(s, p, &ignored); }
+    if (s[*p] == '{') {
+        ++*p; json_ws(s, p);
+        if (*p < s.size() && s[*p] == '}') { ++*p; return true; }
+        while (*p < s.size()) {
+            std::string key;
+            if (!json_string(s, p, &key)) return false;
+            json_ws(s, p);
+            if (*p >= s.size() || s[(*p)++] != ':') return false;
+            if (!json_skip_value(s, p, depth + 1)) return false;
+            json_ws(s, p);
+            if (*p < s.size() && s[*p] == '}') { ++*p; return true; }
+            if (*p >= s.size() || s[(*p)++] != ',') return false;
+            json_ws(s, p);
+        }
+        return false;
+    }
+    if (s[*p] == '[') {
+        ++*p; json_ws(s, p);
+        if (*p < s.size() && s[*p] == ']') { ++*p; return true; }
+        while (*p < s.size()) {
+            if (!json_skip_value(s, p, depth + 1)) return false;
+            json_ws(s, p);
+            if (*p < s.size() && s[*p] == ']') { ++*p; return true; }
+            if (*p >= s.size() || s[(*p)++] != ',') return false;
+            json_ws(s, p);
+        }
+        return false;
+    }
+    size_t begin = *p;
+    while (*p < s.size() && s[*p] != ',' && s[*p] != ']' && s[*p] != '}' &&
+           !isspace(static_cast<unsigned char>(s[*p]))) ++*p;
+    if (*p == begin) return false;
+    std::string atom = s.substr(begin, *p - begin);
+    return atom == "true" || atom == "false" || atom == "null" ||
+           (atom.find_first_not_of("-+0123456789.eE") == std::string::npos);
+}
+
+static bool json_member(const std::string& s, size_t object, const char* wanted,
+                        size_t* value_at) {
+    size_t p = object;
+    json_ws(s, &p);
+    if (p >= s.size() || s[p++] != '{') return false;
+    json_ws(s, &p);
+    if (p < s.size() && s[p] == '}') return false;
+    while (p < s.size()) {
+        std::string key;
+        if (!json_string(s, &p, &key)) return false;
+        json_ws(s, &p);
+        if (p >= s.size() || s[p++] != ':') return false;
+        json_ws(s, &p);
+        if (key == wanted) { *value_at = p; return true; }
+        if (!json_skip_value(s, &p)) return false;
+        json_ws(s, &p);
+        if (p < s.size() && s[p] == '}') return false;
+        if (p >= s.size() || s[p++] != ',') return false;
+        json_ws(s, &p);
+    }
+    return false;
+}
+
+static std::string extract_content(const std::string& body) {
+    size_t choices = 0;
+    if (!json_member(body, 0, "choices", &choices)) return "";
+    json_ws(body, &choices);
+    if (choices >= body.size() || body[choices++] != '[') return "";
+    json_ws(body, &choices);
+    if (choices >= body.size() || body[choices] != '{') return "";
+    size_t message = 0;
+    if (!json_member(body, choices, "message", &message)) return "";
+    size_t content = 0;
+    if (!json_member(body, message, "content", &content)) return "";
+    std::string result;
+    if (!json_string(body, &content, &result)) return "";
+    return result;
 }
 
 struct ParsedUrl {
