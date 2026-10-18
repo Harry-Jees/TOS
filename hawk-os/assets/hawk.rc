@@ -1,0 +1,2 @@
+// ID 1 is the main application icon. The C++ code loads it by this ID.
+1 ICON "hawk.ico"
