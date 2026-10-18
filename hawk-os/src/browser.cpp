@@ -62,7 +62,8 @@ bool get_page_socket(std::string* url,std::string* err) {
 }
 bool cdp_call(const std::string& method,const std::string& params,std::string* response,std::string* err) {
     std::string ws;if(!get_page_socket(&ws,err))return false;
-    std::wstring wurl=wide(ws);URL_COMPONENTS uc{};uc.dwStructSize=sizeof(uc);
+    std::string http_url=ws; if(http_url.rfind("ws://",0)==0) http_url.replace(0,5,"http://");
+    std::wstring wurl=wide(http_url);URL_COMPONENTS uc{};uc.dwStructSize=sizeof(uc);
     wchar_t host[256]{},path[2048]{};uc.lpszHostName=host;uc.dwHostNameLength=256;uc.lpszUrlPath=path;uc.dwUrlPathLength=2048;
     if(!WinHttpCrackUrl(wurl.c_str(),0,0,&uc)){*err="invalid local CDP websocket URL";return false;}
     HINTERNET session=WinHttpOpen(L"HawkOS-CDP/1.0",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
