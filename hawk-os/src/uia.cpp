@@ -210,6 +210,10 @@ bool act_accessible_control(HWND hwnd, const std::string& action,
 
     HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) {
+        if (result) *result = "COM could not be initialized for Windows UI Automation";
+        return false;
+    }
     IUIAutomation* automation = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
                                   IID_PPV_ARGS(&automation));
