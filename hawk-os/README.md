@@ -12,7 +12,8 @@ exactly what happened afterwards.
 hawk.exe                      the app window (live screen + Agent panel)
 hawk.exe --selftest           prove capture + physical input work on this PC
 hawk.exe --run "..."          execute agent commands
-hawk.exe --goal "..."         let a vision model plan and act
+hawk.exe --goal "..."         ask a vision model to plan (plan-only by default)
+hawk.exe --auto-run --goal "..."  explicitly allow the model plan to execute
 hawk.exe --help               the full CLI
 ```
 
