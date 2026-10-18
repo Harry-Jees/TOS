@@ -1610,11 +1610,32 @@ bool Agent::step(const std::string& raw_line, int depth) {
             log("info", listing);
             return true;
         }
+        if (operation == "stats" || operation == "recommend") {
+            auto scores = read_workflow_scores();
+            scores.erase(std::remove_if(scores.begin(),scores.end(),[](const WorkflowScore& x){
+                std::string p; return !workflow_file_path(x.name,&p) || GetFileAttributesA(p.c_str())==INVALID_FILE_ATTRIBUTES;
+            }),scores.end());
+            if (scores.empty()) { log("info", "workflow memory: no completed runs recorded yet"); return true; }
+            std::sort(scores.begin(),scores.end(),[](const WorkflowScore& x,const WorkflowScore& y){
+                const int xt=x.successes+x.failures, yt=y.successes+y.failures;
+                const double xs=(x.successes+1.0)/(xt+2.0), ys=(y.successes+1.0)/(yt+2.0);
+                return xs==ys ? xt>yt : xs>ys;
+            });
+            if (operation == "recommend") {
+                const auto& x=scores.front(); const int total=x.successes+x.failures;
+                log("info", "recommended workflow: "+x.name+" ("+std::to_string(x.successes)+"/"+std::to_string(total)+" successful runs; smoothed score "+std::to_string((x.successes+1.0)/(total+2.0))+")");
+            } else {
+                std::string report="workflow outcome memory:";
+                for(const auto& x:scores) report+="\n  "+x.name+": "+std::to_string(x.successes)+" success, "+std::to_string(x.failures)+" failed";
+                log("info",report);
+            }
+            return true;
+        }
         if (operation == "run") {
             log("fail", "workflow run must be a standalone script line so it can be expanded before execution");
             return false;
         }
-        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow run <name>");
+        log("fail", "workflow syntax: workflow save <name> | workflow list | workflow record start|stop <name> | workflow stats | workflow recommend | workflow run <name>");
         return false;
     }
 
@@ -2899,6 +2920,18 @@ static void append_outcome_record(int steps,int failures,const char* status,cons
  HANDLE h=CreateFileA((dir+"\\run-outcomes.jsonl").c_str(),FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(h==INVALID_HANDLE_VALUE)return;
  char row[256];int n=snprintf(row,sizeof(row),"{\"status\":\"%s\",\"workflow\":\"%s\",\"steps\":%d,\"failures\":%d}\r\n",status,workflow.c_str(),steps,failures);DWORD written=0;
  if(n>0&&n<(int)sizeof(row))WriteFile(h,row,(DWORD)n,&written,nullptr);CloseHandle(h);
+}
+struct WorkflowScore { std::string name; int successes=0; int failures=0; };
+static std::vector<WorkflowScore> read_workflow_scores() {
+ std::vector<WorkflowScore> scores; FILE* f=fopen((app_dir()+"\\workspace\\run-outcomes.jsonl").c_str(),"rb");if(!f)return scores;
+ char line[1024];
+ while(fgets(line,sizeof(line),f)){
+  std::string row=line;size_t p=row.find("\"workflow\":\"");if(p==std::string::npos)continue;p+=12;size_t e=row.find('"',p);if(e==std::string::npos||e==p)continue;
+  std::string name=row.substr(p,e-p);if(!valid_workflow_name(name))continue;
+  size_t ix=0;for(;ix<scores.size();++ix)if(scores[ix].name==name)break;if(ix==scores.size())scores.push_back({name,0,0});
+  if(row.find("\"status\":\"completed\"")!=std::string::npos&&row.find("\"failures\":0")!=std::string::npos)scores[ix].successes++;else scores[ix].failures++;
+ }
+ fclose(f);return scores;
 }
 // ------------------------------------------------------------------- script --
 bool Agent::run_script(const std::string& source_script) {
