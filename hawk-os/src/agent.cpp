@@ -447,30 +447,25 @@ bool Agent::look() {
     return true;
 }
 
-// Compile the small workflow control language before any desktop action runs.
-// Syntax: set name value; if name == value; else; endif. Values are literal,
-// bounded, and substituted only as complete $name tokens to avoid accidental
-// replacement inside paths or ordinary prose.
+// Bounded workflow variables and conditional blocks, compiled before actions execute.
 static bool compile_workflow_logic(const std::string& input, std::string* output, std::string* error) {
     std::vector<std::pair<std::string, std::string>> vars;
-    struct Branch { bool parent_active; bool condition; bool saw_else; };
-    std::vector<Branch> branches;
-    auto active = [&]() { for (const auto& b : branches) if (b.parent_active && !(b.saw_else ? !b.condition : b.condition)) continue; else return false; return true; };
-    auto lookup = [&](const std::string& name) -> std::string { for (auto it = vars.rbegin(); it != vars.rend(); ++it) if (it->first == name) return it->second; return ""; };
-    output->clear(); size_t pos = 0;
-    while (pos < input.size()) {
-        size_t nl = input.find('\\n', pos); bool had_nl = nl != std::string::npos;
-        std::string line = input.substr(pos, had_nl ? nl-pos : std::string::npos); pos = had_nl ? nl+1 : input.size();
-        std::string t = trim(line); auto w = split_words(t);
-        if (!w.empty() && to_lower(w[0]) == "set") {
-            if (w.size() < 3 || w[1].empty() || w[1].size() > 40 || !std::all_of(w[1].begin(), w[1].end(), [](unsigned char c){return isalnum(c) || c=='_';})) { *error = "invalid set syntax; use: set name value"; return false; }
-            if (active()) { std::string value = remainder_after(t, 2); if (value.size() > 4096) { *error = "variable value exceeds 4096 bytes"; return false; }
-                bool found=false; for (auto& v : vars) if(v.first==w[1]) {v.second=value; found=true; break;} if(!found) {if(vars.size()>=64){*error="workflow variable limit (64) exceeded";return false;} vars.emplace_back(w[1],value);} }
-        } else if (!w.empty() && to_lower(w[0]) == "if") {
-            if (w.size() != 4 || w[2] != "==") { *error = "invalid condition; use: if name == value"; return false; }
-            if (branches.size() >= 16) { *error = "conditional nesting exceeds 16 levels"; return false; }
-            bool parent = active(); std::string left = lookup(w[1]); std::string right = w[3];
-            if (!right.empty() && right[0]=='(const std::string& source_script) {
+    struct Branch { bool parent; bool condition; bool otherwise; };
+    std::vector<Branch> stack;
+    auto active = [&]() { for (const auto& b : stack) if (!b.parent || (b.otherwise ? b.condition : !b.condition)) return false; return true; };
+    auto lookup = [&](const std::string& n) { for (auto i=vars.rbegin(); i!=vars.rend(); ++i) if(i->first==n) return i->second; return std::string(); };
+    output->clear(); size_t pos=0;
+    while(pos<input.size()) {
+        size_t nl=input.find('\n',pos); bool has_nl=nl!=std::string::npos;
+        std::string line=input.substr(pos,has_nl?nl-pos:std::string::npos); pos=has_nl?nl+1:input.size();
+        std::string t=trim(line); auto w=split_words(t); std::string cmd=w.empty()?"":to_lower(w[0]);
+        if(cmd=="set") {
+            if(w.size()<3 || w[1].size()>40 || !std::all_of(w[1].begin(),w[1].end(),[](unsigned char c){return isalnum(c)||c=='_';})) { *error="invalid set syntax; use: set name value"; return false; }
+            if(active()) { std::string val=remainder_after(t,2); if(val.size()>4096){*error="variable value exceeds 4096 bytes";return false;} bool found=false; for(auto& v:vars)if(v.first==w[1]){v.second=val;found=true;break;} if(!found){if(vars.size()>=64){*error="variable limit (64) exceeded";return false;}vars.emplace_back(w[1],val);} }
+        } else if(cmd=="if") {
+            if(w.size()!=4||w[2]!="=="){*error="invalid condition; use: if name == value";return false;}
+            if(stack.size()>=16){*error="conditional nesting exceeds 16 levels";return false;}
+            std::string right=w[3]; if(!right.empty()&&right[0]=='(const std::string& source_script) {
     std::string script;
     std::string expansion_error;
     if (!expand_workflow_script(source_script, &script, 0, &expansion_error)) {
@@ -480,10 +475,7 @@ static bool compile_workflow_logic(const std::string& input, std::string* output
     if (script != source_script)
         log("info", "expanded saved workflow reference(s) before execution");
     std::string compiled_script, compile_error;
-    if (!compile_workflow_logic(script, &compiled_script, &compile_error)) {
-        log("fail", "workflow compilation failed before execution: " + compile_error);
-        return false;
-    }
+    if (!compile_workflow_logic(script, &compiled_script, &compile_error)) { log("fail", "workflow compilation failed before execution: " + compile_error); return false; }
     script.swap(compiled_script);
     Point cursor_before = cursor_pos();
     if (config.restore_cursor) save_cursor_origin();
@@ -2847,34 +2839,25 @@ bool Agent::run_goal(const std::string& goal) {
 }
 
 }  // namespace hawk
-) right=lookup(right.substr(1));
-            branches.push_back({parent, left==right, false});
-        } else if (!w.empty() && to_lower(w[0]) == "else") {
-            if (w.size()!=1 || branches.empty() || branches.back().saw_else) { *error="unexpected or duplicate else"; return false; } branches.back().saw_else=true;
-        } else if (!w.empty() && to_lower(w[0]) == "endif") {
-            if (w.size()!=1 || branches.empty()) { *error="unexpected endif"; return false; } branches.pop_back();
-        } else if (active()) {
-            std::string expanded=line;
-            for (const auto& v : vars) { std::string key="$"+v.first; size_t at=0; while((at=expanded.find(key,at))!=std::string::npos) { size_t end=at+key.size(); if(end<expanded.size() && (isalnum((unsigned char)expanded[end])||expanded[end]=='_')) {at=end;continue;} expanded.replace(at,key.size(),v.second); at+=v.second.size(); } }
-            if (expanded.size() > 1024*1024-output->size()) { *error="compiled workflow exceeds 1 MiB"; return false; }
-            output->append(expanded); if(had_nl) output->push_back('\\n');
+)right=lookup(right.substr(1));
+            stack.push_back({active(),lookup(w[1])==right,false});
+        } else if(cmd=="else") {
+            if(w.size()!=1||stack.empty()||stack.back().otherwise){*error="unexpected or duplicate else";return false;} stack.back().otherwise=true;
+        } else if(cmd=="endif") {
+            if(w.size()!=1||stack.empty()){*error="unexpected endif";return false;} stack.pop_back();
+        } else if(active()) {
+            for(const auto& v:vars){std::string key="$"+v.first;size_t at=0;while((at=line.find(key,at))!=std::string::npos){size_t e=at+key.size();if(e<line.size()&&(isalnum((unsigned char)line[e])||line[e]=='_')){at=e;continue;}line.replace(at,key.size(),v.second);at+=v.second.size();}}
+            if(line.size()>1024*1024-output->size()){*error="compiled workflow exceeds 1 MiB";return false;} output->append(line);if(has_nl)output->push_back('\n');
         }
     }
-    if (!branches.empty()) { *error="unclosed if block; expected endif"; return false; }
-    return true;
+    if(!stack.empty()){*error="unclosed if block; expected endif";return false;} return true;
 }
-
-static void record_run_outcome(int executed, int failed, const char* status) {
-    // Privacy-preserving local learning signal: counts only, no prompts, typed
-    // text, screenshots, window titles, file contents, or credentials.
-    const std::string path = app_dir() + "\\\\workspace\\\\run-outcomes.jsonl";
-    CreateDirectoryA((app_dir()+"\\\\workspace").c_str(), nullptr);
-    HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return;
-    char row[160]; int n = snprintf(row, sizeof(row), "{\\\"status\\\":\\\"%s\\\",\\\"steps\\\":%d,\\\"failures\\\":%d}\\r\\n", status, executed, failed);
-    DWORD written=0; WriteFile(h,row,(DWORD)n,&written,nullptr); CloseHandle(h);
+static void record_run_outcome(int steps, int failures, const char* status) {
+    const std::string dir=app_dir()+"\\workspace"; CreateDirectoryA(dir.c_str(),nullptr);
+    HANDLE h=CreateFileA((dir+"\\run-outcomes.jsonl").c_str(),FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(h==INVALID_HANDLE_VALUE)return; char row[160]; int n=snprintf(row,sizeof(row),"{\"status\":\"%s\",\"steps\":%d,\"failures\":%d}\r\n",status,steps,failures);
+    DWORD written=0;if(n>0&&n<(int)sizeof(row))WriteFile(h,row,(DWORD)n,&written,nullptr);CloseHandle(h);
 }
-
 // ------------------------------------------------------------------- script --
 bool Agent::run_script(const std::string& source_script) {
     std::string script;
