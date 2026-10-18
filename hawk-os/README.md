@@ -124,7 +124,7 @@ that is missing. Any C++17 compiler that can link the Win32 import libraries
 works:
 
 ```
--luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs
+-luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32
 ```
 
 The executable is a GUI-subsystem binary, so no console window flashes when you
