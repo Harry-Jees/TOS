@@ -77,7 +77,10 @@ One dark window, no menus to hunt through:
 Windows DPAPI-protected API key in `hawk.ini` next to the executable. Legacy
 plaintext keys are still read for migration; saving settings rewrites them in
 protected form. The key is never intentionally printed to the log, screen, or
-terminal. Any OpenAI-compatible endpoint works — NVIDIA
+terminal. Screenshot upload is opt-in: the desktop UI asks before a vision goal
+sends screen content to the configured provider. In CLI mode, pass
+`--allow-screen-upload` explicitly with `--goal` to permit that upload; without
+it, image-bearing requests fail closed. Any OpenAI-compatible endpoint works — NVIDIA
 NIM is the default (`https://integrate.api.nvidia.com/v1`) with a vision model
 that can actually read screenshots (`nvidia/nemotron-3.5-super-vl-120b-a12b`,
 NVIDIA's first-party vision-language model). Or set `HAWK_API_KEY`,
