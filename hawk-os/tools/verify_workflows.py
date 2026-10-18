@@ -101,6 +101,19 @@ def main():
               and "PHASE_B_MALFORMED" not in output and "MUST_NOT_RUN" not in output)
         print(f"malformed branch fails before execution: {'PASS' if ok else 'FAIL'}")
         failures += not ok
+
+        r = run("--dry-run", "--run", 'browser text "body"')
+        output = r.stdout + r.stderr
+        ok = r.returncode == 0 and "dry-run: browser text body" in output
+        print(f"browser DOM command supports dry-run: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
+        r = run("--dry-run", "--run", "workflow stats")
+        output = r.stdout + r.stderr
+        ok = r.returncode == 0 and "workflow memory:" in output
+        print(f"workflow outcome memory is queryable: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
     finally:
         for path in paths:
             try:
@@ -112,7 +125,7 @@ def main():
             except OSError:
                 pass
 
-    print(f"\n{8 - failures}/8 workflow checks passed")
+    print(f"\n{10 - failures}/10 workflow checks passed")
     return 1 if failures else 0
 
 
