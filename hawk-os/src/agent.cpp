@@ -44,7 +44,7 @@ Agent::Agent(Config cfg) : config(cfg) {
 Agent::~Agent() = default;
 
 static int bounded_ms(int value, int fallback, int maximum = 30000) {
-    if (value < 0) return 0;
+    if (value < 0) return fallback;
     if (value == 0) return 0;
     if (value > maximum) return maximum;
     return value;
