@@ -809,7 +809,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_ui->chk_click = CreateWindowExW(0, L"BUTTON", L"Click-through",
                                               WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                               hwnd, (HMENU)ID_CHK_CLICKTHRU, nullptr, nullptr);
-            g_ui->chk_autorun = CreateWindowExW(0, L"BUTTON", L"Auto-run scripts",
+            g_ui->chk_autorun = CreateWindowExW(0, L"BUTTON", L"Auto-run (risky)",
                                                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                                 hwnd, (HMENU)ID_CHK_AUTORUN, nullptr, nullptr);
             SendMessageW(g_ui->chk_restore, BM_SETCHECK, BST_CHECKED, 0);
@@ -992,13 +992,25 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                                                        : L"Click-through");
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
-                case ID_CHK_AUTORUN:
-                    g_ui->auto_run =
+                case ID_CHK_AUTORUN: {
+                    bool enable =
                         SendMessageW(g_ui->chk_autorun, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    if (enable) {
+                        int consent = MessageBoxW(
+                            hwnd,
+                            L"Auto-run allows model-generated commands to control your real desktop. A malicious webpage or on-screen prompt may try to manipulate the model. Only enable this for tasks you trust. Continue?",
+                            L"Enable risky automation?", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+                        if (consent != IDOK) {
+                            enable = false;
+                            SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_UNCHECKED, 0);
+                        }
+                    }
+                    g_ui->auto_run = enable;
                     log_append(LogLine{"info", g_ui->auto_run
-                                                    ? "auto-run on: generated scripts are executed"
-                                                    : "auto-run off: scripts are only generated"});
+                                                    ? "auto-run enabled by user confirmation"
+                                                    : "auto-run off: generated scripts are only reviewed"});
                     return 0;
+                }
                 case ID_QUICK1: {
                     Rect v = virtual_desktop();
                     char buf[128];
