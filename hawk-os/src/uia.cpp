@@ -115,14 +115,15 @@ std::string describe_accessible_controls(HWND hwnd, int max_elements) {
         return "";
     }
 
-    std::ostringstream out;
-    int visited = 0, reported = 0;
+    std::vector<std::string> actionable_lines;
+    std::vector<std::string> context_lines;
+    int visited = 0;
     std::function<void(IUIAutomationElement*, int)> walk;
     walk = [&](IUIAutomationElement* parent, int depth) {
-        if (!parent || depth > 8 || visited >= max_elements * 10 || reported >= max_elements) return;
+        if (!parent || depth > 8 || visited >= max_elements * 10) return;
         IUIAutomationElement* child = nullptr;
         if (FAILED(walker->GetFirstChildElement(parent, &child)) || !child) return;
-        while (child && visited < max_elements * 10 && reported < max_elements) {
+        while (child && visited < max_elements * 10) {
             ++visited;
             CONTROLTYPEID type = 0;
             RECT rect{};
@@ -134,28 +135,52 @@ std::string describe_accessible_controls(HWND hwnd, int max_elements) {
 
             std::string name = narrow(element_name(child));
             one_line(&name);
-            if (!offscreen && rect.right > rect.left && rect.bottom > rect.top &&
-                (!name.empty() || type == UIA_ButtonControlTypeId ||
-                 type == UIA_EditControlTypeId || type == UIA_CheckBoxControlTypeId ||
-                 type == UIA_ComboBoxControlTypeId || type == UIA_HyperlinkControlTypeId ||
-                 type == UIA_MenuItemControlTypeId)) {
-                out << control_type_name(type) << " name=\"" << name << "\""
-                    << " rect=" << rect.left << "," << rect.top << ","
-                    << (rect.right - rect.left) << "x" << (rect.bottom - rect.top)
-                    << " enabled=" << (enabled ? "true" : "false") << "\n";
-                ++reported;
+            const bool actionable = type == UIA_ButtonControlTypeId ||
+                type == UIA_EditControlTypeId || type == UIA_CheckBoxControlTypeId ||
+                type == UIA_ComboBoxControlTypeId || type == UIA_HyperlinkControlTypeId ||
+                type == UIA_MenuItemControlTypeId || type == UIA_ListItemControlTypeId ||
+                type == UIA_TabItemControlTypeId || type == UIA_RadioButtonControlTypeId ||
+                type == UIA_SliderControlTypeId || type == UIA_SplitButtonControlTypeId ||
+                type == UIA_TreeItemControlTypeId || type == UIA_SpinnerControlTypeId;
+            const bool context = type == UIA_WindowControlTypeId || type == UIA_PaneControlTypeId ||
+                type == UIA_ToolBarControlTypeId || type == UIA_GroupControlTypeId ||
+                type == UIA_ListControlTypeId || type == UIA_DataGridControlTypeId ||
+                type == UIA_TableControlTypeId || type == UIA_MenuControlTypeId ||
+                type == UIA_TreeControlTypeId;
+            if (!offscreen && !name.empty() && rect.right > rect.left && rect.bottom > rect.top &&
+                (actionable || context || type == UIA_TextControlTypeId)) {
+                std::ostringstream line;
+                line << control_type_name(type) << " name=\"" << name << "\""
+                     << " rect=" << rect.left << "," << rect.top << ","
+                     << (rect.right - rect.left) << "x" << (rect.bottom - rect.top)
+                     << " enabled=" << (enabled ? "true" : "false") << "\n";
+                if (actionable) actionable_lines.push_back(line.str());
+                else context_lines.push_back(line.str());
             }
-            if (depth < 8 && visited < max_elements * 10 && reported < max_elements)
-                walk(child, depth + 1);
+            if (depth < 8 && visited < max_elements * 10) walk(child, depth + 1);
 
             IUIAutomationElement* next = nullptr;
             HRESULT next_hr = walker->GetNextSiblingElement(child, &next);
             child->Release();
             child = SUCCEEDED(next_hr) ? next : nullptr;
         }
-        if (child) child->Release(); // release a sibling left by an early traversal stop
+        if (child) child->Release();
     };
     walk(root, 0);
+
+    // Spend the output budget on actionable controls first. Large accessibility
+    // trees often contain dozens of text labels before the buttons/fields a model
+    // actually needs to operate.
+    std::ostringstream out;
+    int reported = 0;
+    for (const auto* group : {&actionable_lines, &context_lines}) {
+        for (const std::string& line : *group) {
+            if (reported >= max_elements) break;
+            out << line;
+            ++reported;
+        }
+        if (reported >= max_elements) break;
+    }
 
     walker->Release();
     root->Release();
