@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
+import secrets
 import subprocess
 import sys
-import secrets
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = os.path.join(ROOT, "hawk.exe")
@@ -25,13 +25,14 @@ def main() -> int:
     failures = 0
 
     # Path traversal must be rejected before a file is created.
-    outside = os.path.join(ROOT, "hawk-security-escape.txt")
-    if os.path.exists(outside):
-        os.remove(outside)
-    result = run_script(r"write ..\hawk-security-escape.txt must-not-exist")
+    escape_name = "hawk-security-escape-" + secrets.token_hex(6) + ".txt"
+    outside = os.path.join(ROOT, escape_name)
+    result = run_script("write ..\\" + escape_name + " must-not-exist")
     passed = result.returncode != 0 and not os.path.exists(outside)
     print(f"workspace traversal rejected: {'PASS' if passed else 'FAIL'}")
     failures += not passed
+    if os.path.exists(outside):
+        os.remove(outside)
 
     # Writes must not silently truncate a file already in the workspace.
     existing = os.path.join(WORK, "hawk-security-overwrite.txt")
@@ -50,7 +51,12 @@ def main() -> int:
     if os.path.exists(created):
         os.remove(created)
     result = run_script("write hawk-security-created.txt safe")
-    passed = result.returncode == 0 and open(created, "r", encoding="utf-8").read() == "safe"
+    try:
+        with open(created, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        content = None
+    passed = result.returncode == 0 and content == "safe"
     print(f"new workspace file can be created: {'PASS' if passed else 'FAIL'}")
     failures += not passed
     if os.path.exists(created):
