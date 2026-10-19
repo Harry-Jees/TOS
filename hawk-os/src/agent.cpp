@@ -573,6 +573,7 @@ bool Agent::run_script(const std::string& source_script) {
             commands++;
             std::string reason;
             if(cmd=="del"||cmd=="rm"||cmd=="delete") reason="deletes workspace data";
+            else if(cmd=="write"||cmd=="mkdir"||cmd=="ensure") reason="creates or changes workspace files";
             else if(cmd=="browser"&&words.size()>1){
                 std::string op=to_lower(words[1]);
                 if(op=="click"||op=="fill"||op=="navigate"||op=="submit")
@@ -602,8 +603,8 @@ bool Agent::run_script(const std::string& source_script) {
         }
         std::string report="workflow preflight: "+name+"; "+std::to_string(commands)+" command(s); "+std::to_string(review.size())+" review item(s)";
         report+="\nNo actions were executed. This heuristic cannot prove a workflow safe.";
-        for(const auto& item:review)report+="\\n  line "+std::to_string(item.line)+": "+item.command+" — "+item.reason;
-        if(review.empty())report+="\\n  No known high-risk command patterns detected.";
+        for(const auto& item:review)report+="\n  line "+std::to_string(item.line)+": "+item.command+" — "+item.reason;
+        if(review.empty())report+="\n  No known high-risk command patterns detected.";
         log("info",report);
         return true;
     }

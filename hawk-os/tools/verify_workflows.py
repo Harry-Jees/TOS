@@ -115,15 +115,28 @@ def main():
         print(f"workflow outcome memory is queryable: {'PASS' if ok else 'FAIL'}")
         failures += not ok
 
+        inspect_side_effect = os.path.join(ROOT, "workspace", "phase-d-inspect-must-not-run.txt")
+        if os.path.exists(inspect_side_effect):
+            os.remove(inspect_side_effect)
         with open(paths[4], "w", encoding="utf-8", newline="") as f:
-            f.write("log PHASE_B_INSPECT_MUST_NOT_RUN\nbrowser navigate https://example.com\n")
-        r = run("--dry-run", "--run", f"workflow inspect {names[4]}")
+            f.write("write phase-d-inspect-must-not-run.txt sentinel\nbrowser navigate https://example.com\n")
+        # Intentionally omit --dry-run: inspect itself must never execute workflow steps.
+        r = run("--run", f"workflow inspect {names[4]}")
         output = r.stdout + r.stderr
         ok = (r.returncode == 0 and "workflow preflight:" in output
               and "review item(s)" in output and "browser" in output
-              and "PHASE_B_INSPECT_MUST_NOT_RUN" not in output)
-        print(f"workflow preflight reports risks without executing actions: {'PASS' if ok else 'FAIL'}")
+              and "sentinel" not in output and not os.path.exists(inspect_side_effect))
+        print(f"workflow preflight is read-only outside dry-run: {'PASS' if ok else 'FAIL'}")
+        if not ok:
+            print(f"  exit={r.returncode}; report_present={'workflow preflight:' in output}; "
+                  f"review_count_present={'review item(s)' in output}; browser_flag={'browser' in output}; "
+                  f"argument_redacted={'sentinel' not in output}; side_effect_absent={not os.path.exists(inspect_side_effect)}")
+            print("  output tail:")
+            for line in output.splitlines()[-10:]:
+                print("   ", line)
         failures += not ok
+        if os.path.exists(inspect_side_effect):
+            os.remove(inspect_side_effect)
 
     finally:
         for path in paths:
