@@ -55,7 +55,7 @@ def scenario(name, goal, script_replies, want_files):
         if os.path.exists(p):
             os.remove(p)
     r = subprocess.run(
-        [EXE, "--base-url", f"http://127.0.0.1:{PORT}/v1", "--key", "mock", "--allow-screen-upload", "--auto-run",
+        [EXE, "--base-url", f"http://127.0.0.1:{PORT}/v1", "--allow-screen-upload", "--auto-run",
          "--delay", "100", "--steps", "20", "--goal", goal],
         capture_output=True, text=True, timeout=180, errors="replace")
     out = r.stdout + r.stderr
@@ -83,6 +83,16 @@ def main():
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     results = []
+    # The app deliberately accepts credentials only from .env. Use a temporary
+    # mock key for this offline test and restore any user file byte-for-byte.
+    env_path = os.path.join(ROOT, ".env")
+    had_env = os.path.isfile(env_path)
+    saved_env = None
+    if had_env:
+        with open(env_path, "rb") as f:
+            saved_env = f.read()
+    with open(env_path, "w", encoding="utf-8", newline="\\n") as f:
+        f.write("NVIDIA_API_KEY=mock\\n")
     try:
         results.append(scenario(
             "plan -> execute -> verify 'done'",
@@ -116,6 +126,15 @@ def main():
         server.shutdown()
         server.server_close()
         worker.join(timeout=2)
+        # Restore the user's .env exactly; never leave the mock credential behind.
+        if had_env and saved_env is not None:
+            with open(env_path, "wb") as f:
+                f.write(saved_env)
+        else:
+            try:
+                os.remove(env_path)
+            except OSError:
+                pass
         # Leave the repository workspace clean even if a scenario fails.
         for name in ("mock-a.txt", "mock-b.txt", "mock-c.txt", "mock-d.txt", "mock-unicode.txt"):
             path = os.path.join(ROOT, "workspace", name)
