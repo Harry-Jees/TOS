@@ -491,7 +491,7 @@ int run_cli(int argc, char** argv) {
         else if (a == "--base-url") cfg.base_url = next("--base-url");
         // API credentials cannot be supplied via CLI; load_settings reads .env.
         else if (a == "--key" || a == "--key-file") {
-            printf("API keys must be stored in .env as NVIDIA_API_KEY; CLI key options are disabled.\\n");
+            printf("API keys must be stored in .env as NVIDIA_API_KEY; CLI key options are disabled.\n");
             return 2;
         } else if (!command.empty()) {
             if (positional == 0) arg1 = a;
