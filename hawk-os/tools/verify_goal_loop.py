@@ -91,8 +91,8 @@ def main():
     if had_env:
         with open(env_path, "rb") as f:
             saved_env = f.read()
-    with open(env_path, "w", encoding="utf-8", newline="\\n") as f:
-        f.write("NVIDIA_API_KEY=mock\\n")
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("NVIDIA_API_KEY=mock\n")
     try:
         results.append(scenario(
             "plan -> execute -> verify 'done'",
