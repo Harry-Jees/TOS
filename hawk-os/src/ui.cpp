@@ -54,21 +54,22 @@ enum {
 static const int HEADER_H = 62;
 #define HEADER_TOP() (HEADER_H + 10)
 
-static const COLORREF C_BG = RGB(10, 14, 20);
-static const COLORREF C_PANEL = RGB(17, 24, 34);
-static const COLORREF C_HEADER1 = RGB(25, 43, 61);
-static const COLORREF C_HEADER2 = RGB(10, 15, 23);
-static const COLORREF C_TEXT = RGB(240, 247, 255);
-static const COLORREF C_MUTED = RGB(143, 164, 184);
-static const COLORREF C_ACCENT = RGB(0, 190, 255);
-static const COLORREF C_DANGER = RGB(214, 62, 54);
-static const COLORREF C_BTN = RGB(29, 42, 57);
-static const COLORREF C_BTN_HI = RGB(40, 59, 78);
-static const COLORREF C_LINE = RGB(39, 58, 76);
-static const COLORREF C_FIELD = RGB(9, 15, 23);
-static const COLORREF C_OK = RGB(70, 230, 170);
-static const COLORREF C_WARN = RGB(255, 190, 70);
-static const COLORREF C_OFF = RGB(120, 120, 132);
+// Obsidian + warm metallic amber: clear contrast, restrained accents, less generic neon.
+static const COLORREF C_BG = RGB(11, 12, 15);
+static const COLORREF C_PANEL = RGB(22, 23, 27);
+static const COLORREF C_HEADER1 = RGB(44, 35, 22);
+static const COLORREF C_HEADER2 = RGB(12, 12, 14);
+static const COLORREF C_TEXT = RGB(248, 246, 240);
+static const COLORREF C_MUTED = RGB(171, 166, 155);
+static const COLORREF C_ACCENT = RGB(231, 174, 75);
+static const COLORREF C_DANGER = RGB(235, 83, 75);
+static const COLORREF C_BTN = RGB(34, 32, 29);
+static const COLORREF C_BTN_HI = RGB(57, 48, 35);
+static const COLORREF C_LINE = RGB(64, 54, 39);
+static const COLORREF C_FIELD = RGB(14, 15, 17);
+static const COLORREF C_OK = RGB(112, 218, 158);
+static const COLORREF C_WARN = RGB(245, 190, 89);
+static const COLORREF C_OFF = RGB(132, 128, 120);
 
 struct UiState {
     HWND hwnd = nullptr;
@@ -600,8 +601,8 @@ static bool g_cfg_saved = false;
 static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
-            g_cfg_key = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_PASSWORD,
-                                        24, 62, 500, 28, hwnd, nullptr, nullptr, nullptr);
+            g_cfg_key = CreateWindowExW(0, L"STATIC", L"Credential source: .env beside hawk.exe (NVIDIA_API_KEY)",
+                                        WS_CHILD | WS_VISIBLE, 24, 62, 500, 28, hwnd, nullptr, nullptr, nullptr);
             g_cfg_url = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wide(g_cfg.base_url).c_str(),
                                         WS_CHILD | WS_VISIBLE, 24, 128, 500, 28, hwnd, nullptr,
                                         nullptr, nullptr);
@@ -633,23 +634,15 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_COMMAND:
             if (LOWORD(wp) == ID_BTN_SETTINGS) {
-                std::string key = box_text(g_cfg_key);
                 std::string url = box_text(g_cfg_url);
                 std::string model = box_text(g_cfg_model);
-                if (!key.empty()) g_cfg.api_key = key;
                 if (!url.empty()) g_cfg.base_url = url;
                 if (!model.empty()) g_cfg.model = model;
-                // Protect credentials with Windows DPAPI before writing settings.
-                std::string protected_key = protect_secret(g_cfg.api_key);
-                if (!g_cfg.api_key.empty() && protected_key.empty()) {
-                    MessageBoxW(hwnd, L"Windows could not protect the API key. Settings were not saved.",
-                                L"Hawk OS security", MB_OK | MB_ICONERROR);
-                    return 0;
-                }
+                // Never save or replace the credential from this dialog: startup
+                // credentials must come only from the user's local .env file.
                 FILE* f = fopen((app_dir() + "\\hawk.ini").c_str(), "w");
                 if (f) {
-                    fprintf(f, "# Hawk OS settings - API key is DPAPI-protected for this Windows user\n");
-                    if (!protected_key.empty()) fprintf(f, "api_key_dpapi=%s\n", protected_key.c_str());
+                    fprintf(f, "# Non-secret Hawk OS preferences; API credentials belong in .env\n");
                     fprintf(f, "base_url=%s\n", g_cfg.base_url.c_str());
                     fprintf(f, "model=%s\n", g_cfg.model.c_str());
                     fprintf(f, "vision=%d\n", g_cfg.vision ? 1 : 0);
@@ -680,14 +673,14 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TextOutW(dc, 24, 18, L"MODEL CONNECTION", 16);
             SelectObject(dc, g_ui->f_ui);
             SetTextColor(dc, C_MUTED);
-            const wchar_t* l1 = L"NVIDIA API key (masked here; saved encrypted with Windows DPAPI)";
-            const wchar_t* l2 = L"OpenAI-compatible API base URL";
+            const wchar_t* l1 = L"API key is read only from the local .env file; this dialog never stores it.";
+            const wchar_t* l2 = L"NVIDIA NIM API base URL";
             const wchar_t* l3 = L"Vision-capable model ID (default uses NVIDIA Nemotron vision)";
             TextOutW(dc, 24, 40, l1, (int)wcslen(l1));
             TextOutW(dc, 24, 106, l2, (int)wcslen(l2));
             TextOutW(dc, 24, 172, l3, (int)wcslen(l3));
             SetTextColor(dc, C_ACCENT);
-            const wchar_t* l4 = L"Tip: .env beside hawk.exe: NVIDIA_API_KEY / NVIDIA_MODEL / NVIDIA_BASE_URL.";
+            const wchar_t* l4 = L"Keep .env private; it is ignored by Git. Restart Hawk after changing the key.";
             TextOutW(dc, 24, 238, l4, (int)wcslen(l4));
             SelectObject(dc, old);
             EndPaint(hwnd, &ps);
