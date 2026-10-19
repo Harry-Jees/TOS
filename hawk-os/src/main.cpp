@@ -11,11 +11,12 @@
 namespace hawk {
 
 // ---------------------------------------------------------------- settings --
+// Settings: provider credentials are intentionally sourced ONLY from .env.
+// Other non-secret preferences may still be loaded from hawk.ini.
 static void read_ini(Config* cfg) {
     std::string path = app_dir() + "\\hawk.ini";
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
-    std::string legacy_key, protected_key;
     char line[1024];
     while (fgets(line, sizeof(line), f)) {
         std::string s = trim(line);
@@ -24,33 +25,36 @@ static void read_ini(Config* cfg) {
         if (eq == std::string::npos) continue;
         std::string k = to_lower(trim(s.substr(0, eq)));
         std::string v = trim(s.substr(eq + 1));
-        if (k == "api_key_dpapi") {
-            protected_key = v;
-        } else if (k == "api_key") {
-            // Legacy compatibility: old versions wrote plaintext keys. A
-            // protected key always takes precedence if both settings exist.
-            legacy_key = v;
-        }
-        else if (k == "base_url") cfg->base_url = v;
+        // Deliberately ignore api_key and api_key_dpapi: .env is the sole
+        // startup source for credentials, including legacy hawk.ini files.
+        if (k == "base_url") cfg->base_url = v;
         else if (k == "model") cfg->model = v;
         else if (k == "vision") cfg->vision = (v != "0");
         else if (k == "dry_run") cfg->dry_run = (v == "1" || to_lower(v) == "true");
         else if (k == "step_delay_ms") { try { cfg->step_delay_ms = std::stoi(v); } catch (...) {} }
     }
     fclose(f);
-    cfg->api_key = !protected_key.empty() ? unprotect_secret(protected_key) : legacy_key;
 }
 
-// Optional local .env beside hawk.exe. Keep the real file out of Git; process
-// environment variables and command-line flags still take precedence.
+// Read NVIDIA credentials from the .env file beside hawk.exe. No process
+// environment, command-line, or hawk.ini value can supply/override the key.
 static void read_dotenv(Config* cfg) {
     std::string path = app_dir() + "\\.env";
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
     char line[4096];
+    bool first_line = true;
     while (fgets(line, sizeof(line), f)) {
         std::string s = trim(line);
-        if (s.empty() || s[0] == '#' ) continue;
+        // Windows editors may save UTF-8 with a BOM; strip it before matching
+        // the first .env variable name.
+        if (first_line) {
+            first_line = false;
+            if (s.size() >= 3 && (unsigned char)s[0] == 0xEF &&
+                (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF)
+                s.erase(0, 3);
+        }
+        if (s.empty() || s[0] == '#') continue;
         if (s.rfind("export ", 0) == 0) s = trim(s.substr(7));
         size_t eq = s.find('=');
         if (eq == std::string::npos) continue;
@@ -59,11 +63,9 @@ static void read_dotenv(Config* cfg) {
         if (v.size() >= 2 && ((v.front() == '"' && v.back() == '"') ||
                               (v.front() == '\'' && v.back() == '\'')))
             v = v.substr(1, v.size() - 2);
-        // Only recognised provider settings are read; no shell expansion or
-        // arbitrary code execution is performed.
-        if (k == "NVIDIA_API_KEY" || k == "HAWK_API_KEY") cfg->api_key = v;
-        else if (k == "NVIDIA_BASE_URL" || k == "HAWK_BASE_URL") cfg->base_url = v;
-        else if (k == "NVIDIA_MODEL" || k == "HAWK_MODEL") cfg->model = v;
+        if (k == "NVIDIA_API_KEY") cfg->api_key = v;
+        else if (k == "NVIDIA_BASE_URL") cfg->base_url = v;
+        else if (k == "NVIDIA_MODEL") cfg->model = v;
     }
     fclose(f);
 }
@@ -73,18 +75,14 @@ static const char* env_or_null(const char* name) {
     return (v && *v) ? v : nullptr;
 }
 
-// Settings come from hawk.ini next to the executable, then environment
-// variables, then command line flags. The key is never printed anywhere.
+// Credentials come exclusively from .env. Provider endpoint/model can still
+// be overridden by environment for diagnostics, but the API key cannot.
 void load_settings(Config* cfg) {
+    cfg->api_key.clear();
     read_ini(cfg);
     read_dotenv(cfg);
-    // Process-level environment wins over local files (useful for automation/CI).
-    if (const char* v = env_or_null("NVIDIA_API_KEY")) cfg->api_key = v;
     if (const char* v = env_or_null("NVIDIA_BASE_URL")) cfg->base_url = v;
     if (const char* v = env_or_null("NVIDIA_MODEL")) cfg->model = v;
-    if (const char* v = env_or_null("HAWK_API_KEY")) cfg->api_key = v;
-    if (const char* v = env_or_null("HAWK_BASE_URL")) cfg->base_url = v;
-    if (const char* v = env_or_null("HAWK_MODEL")) cfg->model = v;
 }
 
 static void usage() {
@@ -105,7 +103,7 @@ static void usage() {
     printf("  --desktop              print the virtual desktop and monitor geometry\n");
     printf("  --focus <title part>   raise a window\n");
     printf("  --selftest             prove capture + physical input work\n\n");
-    printf("Options: --dry-run --delay <ms> --no-restore --key-file <path> --key <key>\n");
+    printf("Options: --dry-run --delay <ms> --no-restore\n");
     printf("         --auto-run   explicitly allow model-generated scripts to execute\n");
     printf("         --allow-sensitive   bypass per-action prompts (trusted CLI use only)\n");
     printf("         --allow-screen-upload   consent to sending screenshots to the model provider\n");
@@ -500,18 +498,11 @@ int run_cli(int argc, char** argv) {
         else if (a == "--steps") { std::string v = next("--steps"); if (!v.empty()) cfg.max_steps = atoi(v.c_str()); }
         else if (a == "--model") cfg.model = next("--model");
         else if (a == "--base-url") cfg.base_url = next("--base-url");
-        else if (a == "--key") cfg.api_key = next("--key");
+        // Never accept credentials from CLI. Keep --key available as the
+        // keyboard-action command (e.g. hawk.exe --key ctrl+s).
         else if (a == "--key-file") {
-            std::string p = next("--key-file");
-            FILE* f = p.empty() ? nullptr : fopen(p.c_str(), "rb");
-            if (!f) {
-                printf("cannot read key file %s\n", p.c_str());
-                return 2;
-            }
-            char line[512] = {0};
-            if (!fgets(line, sizeof(line), f)) line[0] = '\0';
-            fclose(f);
-            cfg.api_key = trim(line);
+            printf("API keys must be stored in .env as NVIDIA_API_KEY; --key-file is disabled.\n");
+            return 2;
         } else if (!command.empty()) {
             if (positional == 0) arg1 = a;
             else if (positional == 1) arg2 = a;
