@@ -560,7 +560,7 @@ bool Agent::run_script(const std::string& source_script) {
         int commands=0, line_number=0;
         size_t pos=0;
         while(pos<compiled.size()){
-            size_t nl=compiled.find('\\n',pos);
+            size_t nl=compiled.find('\n',pos);
             std::string line=compiled.substr(pos,nl==std::string::npos?std::string::npos:nl-pos);
             pos=nl==std::string::npos?compiled.size():nl+1;
             line_number++;
@@ -601,7 +601,7 @@ bool Agent::run_script(const std::string& source_script) {
             if(!reason.empty())review.push_back({line_number,cmd,reason});
         }
         std::string report="workflow preflight: "+name+"; "+std::to_string(commands)+" command(s); "+std::to_string(review.size())+" review item(s)";
-        report+="\\nNo actions were executed. This heuristic cannot prove a workflow safe.";
+        report+="\nNo actions were executed. This heuristic cannot prove a workflow safe.";
         for(const auto& item:review)report+="\\n  line "+std::to_string(item.line)+": "+item.command+" — "+item.reason;
         if(review.empty())report+="\\n  No known high-risk command patterns detected.";
         log("info",report);
