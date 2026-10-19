@@ -1,17 +1,19 @@
 name: Hawk Debian Package (Wine compatibility)
 
 on:
-  push:
-    paths:
-      - "hawk-os/**"
-      - ".github/workflows/hawk-linux-package.yml"
-  pull_request:
-    paths:
-      - "hawk-os/**"
-      - ".github/workflows/hawk-linux-package.yml"
+  workflow_run:
+    workflows: ["Hawk Windows CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Successful Hawk Windows CI run ID whose hawk-os-windows artifact should be packaged"
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -20,53 +22,38 @@ concurrency:
 
 jobs:
   package:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install cross-compiler and packaging tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 dpkg-dev zip
+      - name: Download tested Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: hawk-os-windows
+          path: package-input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.source_run_id }}
 
-      - name: Build Windows desktop agent
-        working-directory: hawk-os
-        shell: bash
+      - name: Verify input executable
         run: |
           set -euxo pipefail
-          mkdir -p build dist
-          x86_64-w64-mingw32-windres assets/hawk.rc -O coff -o build/hawk_res.o
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -static -o dist/hawk.exe \
-            src/util.cpp src/image.cpp src/capture.cpp src/input.cpp src/winctl.cpp \
-            src/recorder.cpp src/browser.cpp src/agent.cpp src/uia.cpp src/ui.cpp src/main.cpp \
-            build/hawk_res.o \
-            -luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi \
-            -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32 -luuid \
-            -Wl,--subsystem,windows
-          file dist/hawk.exe
-
-      - name: Run offline regressions
-        working-directory: hawk-os
-        run: |
-          python3 tools/verify_ui.py
-          python3 tests/test_security.py
-          python3 tools/verify_goal_loop.py
-          python3 tools/verify_phase_a.py
-          python3 tools/verify_workflows.py
-          python3 tools/verify_phase_c.py
+          test -s package-input/hawk.exe
+          file package-input/hawk.exe
+          file package-input/hawk.exe | grep -qi 'PE32+'
 
       - name: Package .deb wrapper requiring Wine
-        working-directory: hawk-os
         shell: bash
+        env:
+          SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.source_run_id }}
         run: |
           set -euxo pipefail
           VERSION="0.1.${GITHUB_RUN_NUMBER}"
-          PKG="hawk-os-wine_${VERSION}_amd64"
           ROOT="$PWD/dist/pkg-root"
           mkdir -p "$ROOT/DEBIAN" "$ROOT/opt/hawk-os" "$ROOT/usr/bin" "$ROOT/usr/share/applications"
-          install -m 0755 dist/hawk.exe "$ROOT/opt/hawk-os/hawk.exe"
-          install -m 0644 .env.example "$ROOT/opt/hawk-os/.env.example"
+          install -m 0755 package-input/hawk.exe "$ROOT/opt/hawk-os/hawk.exe"
           cat > "$ROOT/DEBIAN/control" <<EOF
           Package: hawk-os-wine
           Version: ${VERSION}
@@ -76,7 +63,7 @@ jobs:
           Depends: wine, xdg-utils
           Maintainer: Hawk OS contributors
           Description: Hawk OS desktop agent (Windows build via Wine)
-           Packages the current Win32 Hawk executable with a Wine launcher.
+           Packages the tested Win32 Hawk executable with a Wine launcher.
            This is a compatibility wrapper, not a native Linux port.
           EOF
           cat > "$ROOT/usr/bin/hawk-os" <<'EOF'
@@ -87,10 +74,6 @@ jobs:
             echo "Hawk OS needs Wine. Install the package dependency and retry." >&2
             exit 127
           fi
-          if [ ! -f "$APP_DIR/.env" ]; then
-            echo "Configure NVIDIA_API_KEY in $APP_DIR/.env before using model features." >&2
-            echo "Copy $APP_DIR/.env.example to $APP_DIR/.env and edit it securely." >&2
-          fi
           cd "$APP_DIR"
           exec wine "$APP_DIR/hawk.exe" "$@"
           EOF
@@ -99,13 +82,15 @@ jobs:
           [Desktop Entry]
           Type=Application
           Name=Hawk OS
-          Comment=Desktop task agent (runs the Windows build through Wine)
+          Comment=Desktop task agent (Windows build through Wine)
           Exec=hawk-os
           Terminal=false
           Categories=Utility;
           EOF
           dpkg-deb --root-owner-group --build "$ROOT" "dist/hawk-os-wine_${VERSION}_amd64.deb"
           dpkg-deb --info "dist/hawk-os-wine_${VERSION}_amd64.deb"
+          dpkg-deb --contents "dist/hawk-os-wine_${VERSION}_amd64.deb"
+          printf '%s\n' "$SOURCE_RUN_ID" > dist/source-windows-run.txt
           rm -rf "$ROOT"
 
       - name: Publish package artifact
@@ -113,7 +98,7 @@ jobs:
         with:
           name: hawk-os-debian-package
           path: |
-            hawk-os/dist/hawk-os-wine_*_amd64.deb
-            hawk-os/dist/hawk.exe
+            dist/hawk-os-wine_*_amd64.deb
+            dist/source-windows-run.txt
           if-no-files-found: error
           retention-days: 14
