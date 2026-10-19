@@ -33,7 +33,6 @@ enum {
     ID_BTN_SETTINGS,
     ID_BTN_CLEAR,
     ID_CHK_DRYRUN,
-    ID_CHK_CLICKTHRU,
     ID_CHK_RESTORE,
     ID_CHK_AUTORUN,
     ID_QUICK1,
@@ -747,9 +746,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                             L"Capture the desktop to a file; the image is not displayed in Hawk");
             g_ui->btn_folder = make_button(hwnd, ID_BTN_FOLDER, L"Shots folder", g_ui->f_ui, L"Open shots/");
             g_ui->btn_settings = make_button(hwnd, ID_BTN_SETTINGS, L"Model", g_ui->f_ui,
-                                             L"API key, base URL and model id");
+                                             L"Open NVIDIA .env setup and edit non-secret model preferences");
             g_ui->btn_clear = make_button(hwnd, ID_BTN_CLEAR, L"Clear", g_ui->f_ui, L"Clear the log");
-            g_ui->quick1 = make_button(hwnd, ID_QUICK1, L"Click middle", g_ui->f_ui,
+            g_ui->quick1 = make_button(hwnd, ID_QUICK1, L"Center click", g_ui->f_ui,
                                        L"Load a sample: click the centre of the screen");
             g_ui->quick2 = make_button(hwnd, ID_QUICK2, L"Notepad demo", g_ui->f_ui,
                                        L"Load a sample script that types into Notepad");
