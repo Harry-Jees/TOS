@@ -473,8 +473,8 @@ int run_cli(int argc, char** argv) {
         else if (a == "--steps") { std::string v = next("--steps"); if (!v.empty()) cfg.max_steps = atoi(v.c_str()); }
         else if (a == "--model") cfg.model = next("--model");
         else if (a == "--base-url") cfg.base_url = next("--base-url");
-        else if (a == "--key" || a == "--key-file") {
-            printf("API keys are loaded only from .env beside hawk.exe; remove this option.\n");
+        else if (a == "--key-file") {
+            printf("API keys are loaded only from .env beside hawk.exe; --key-file is disabled.\n");
             return 2;
         } else if (!command.empty()) {
             if (positional == 0) arg1 = a;
