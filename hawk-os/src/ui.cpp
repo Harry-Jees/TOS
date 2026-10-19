@@ -57,16 +57,16 @@ static const int HEADER_H = 62;
 // Obsidian + warm metallic amber: clear contrast, restrained accents, less generic neon.
 static const COLORREF C_BG = RGB(11, 12, 15);
 static const COLORREF C_PANEL = RGB(22, 23, 27);
-static const COLORREF C_HEADER1 = RGB(44, 35, 22);
-static const COLORREF C_HEADER2 = RGB(12, 12, 14);
+static const COLORREF C_HEADER1 = RGB(18, 43, 47);
+static const COLORREF C_HEADER2 = RGB(9, 13, 18);
 static const COLORREF C_TEXT = RGB(248, 246, 240);
 static const COLORREF C_MUTED = RGB(171, 166, 155);
-static const COLORREF C_ACCENT = RGB(231, 174, 75);
+static const COLORREF C_ACCENT = RGB(83, 218, 204);
 static const COLORREF C_DANGER = RGB(235, 83, 75);
-static const COLORREF C_BTN = RGB(34, 32, 29);
-static const COLORREF C_BTN_HI = RGB(57, 48, 35);
-static const COLORREF C_LINE = RGB(64, 54, 39);
-static const COLORREF C_FIELD = RGB(14, 15, 17);
+static const COLORREF C_BTN = RGB(25, 34, 39);
+static const COLORREF C_BTN_HI = RGB(35, 53, 59);
+static const COLORREF C_LINE = RGB(42, 64, 70);
+static const COLORREF C_FIELD = RGB(12, 20, 24);
 static const COLORREF C_OK = RGB(112, 218, 158);
 static const COLORREF C_WARN = RGB(245, 190, 89);
 static const COLORREF C_OFF = RGB(132, 128, 120);
@@ -80,7 +80,7 @@ struct UiState {
     HWND chk_dry = nullptr, chk_click = nullptr, chk_restore = nullptr, chk_autorun = nullptr;
     HWND quick1 = nullptr, quick2 = nullptr, quick3 = nullptr, quick4 = nullptr;
 
-    HFONT f_ui = nullptr, f_bold = nullptr, f_title = nullptr, f_mono = nullptr, f_label = nullptr;
+    HFONT f_ui = nullptr, f_bold = nullptr, f_title = nullptr, f_mono = nullptr, f_label = nullptr, f_icon = nullptr;
     HBRUSH b_bg = nullptr, b_panel = nullptr, b_field = nullptr, b_log = nullptr;
     Image preview;
     Rect preview_rect{};      // where the screen image is drawn (client coords)
@@ -537,8 +537,31 @@ static void draw_button(LPDRAWITEMSTRUCT di) {
     GetWindowTextW(di->hwndItem, text, 63);
     SetBkMode(di->hDC, TRANSPARENT);
     SetTextColor(di->hDC, disabled ? C_MUTED : C_TEXT);
+    wchar_t glyph = 0;
+    switch (di->CtlID) {
+        case ID_BTN_GOAL: glyph = 0xE768; break;
+        case ID_BTN_SCRIPT: glyph = 0xE943; break;
+        case ID_BTN_STOP: glyph = 0xE71A; break;
+        case ID_BTN_CAPTURE: glyph = 0xE722; break;
+        case ID_BTN_FOLDER: glyph = 0xE8B7; break;
+        case ID_BTN_SETTINGS: glyph = 0xE713; break;
+        case ID_BTN_CLEAR: glyph = 0xE74D; break;
+        case ID_QUICK1: glyph = 0xE8A7; break;
+        case ID_QUICK2: glyph = 0xE8A5; break;
+        case ID_QUICK3: glyph = 0xE8D4; break;
+        case ID_QUICK4: glyph = 0xE897; break;
+    }
+    RECT text_rc = r;
+    if (glyph && g_ui->f_icon) {
+        RECT ir{r.left + 8, r.top, r.left + 27, r.bottom};
+        wchar_t icon_text[2] = {glyph, 0};
+        HGDIOBJ icon_font = SelectObject(di->hDC, g_ui->f_icon);
+        DrawTextW(di->hDC, icon_text, -1, &ir, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(di->hDC, icon_font);
+        text_rc.left += 12;
+    }
     HGDIOBJ oldf = SelectObject(di->hDC, g_ui->f_ui);
-    DrawTextW(di->hDC, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(di->hDC, text, -1, &text_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(di->hDC, oldf);
 }
 
@@ -708,6 +731,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_ui->f_label = CreateFontW(-13, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                         OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                         DEFAULT_PITCH, L"Segoe UI");
+            g_ui->f_icon = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                       OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                       DEFAULT_PITCH, L"Segoe MDL2 Assets");
             g_ui->b_bg = CreateSolidBrush(C_BG);
             g_ui->b_panel = CreateSolidBrush(C_PANEL);
             g_ui->b_field = CreateSolidBrush(C_FIELD);
@@ -779,7 +805,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             set_font(g_ui->log, g_ui->f_mono);
 
             RegisterHotKey(hwnd, ID_HOTKEY_STOP, MOD_CONTROL | MOD_ALT, 'H');
-            SetTimer(hwnd, 1, 160, nullptr);
+            SetTimer(hwnd, 1, 120, nullptr);
             layout(hwnd);
             dump_layout(hwnd);
             set_running(false);  // STOP is grey until there is something to stop
@@ -1091,7 +1117,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             KillTimer(hwnd, 1);
             UnregisterHotKey(hwnd, ID_HOTKEY_STOP);
             for (HFONT* f : {&g_ui->f_ui, &g_ui->f_bold, &g_ui->f_title, &g_ui->f_mono,
-                             &g_ui->f_label})
+                             &g_ui->f_label, &g_ui->f_icon})
                 if (*f) {
                     DeleteObject(*f);
                     *f = nullptr;
