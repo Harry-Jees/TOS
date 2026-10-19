@@ -65,7 +65,7 @@ findarea FF840A 60 click   # or: click the biggest blue region on screen
 
 ## NVIDIA model configuration
 
-Hawk reads an optional `.env` file from the same folder as `hawk.exe` at startup. Copy `.env.example` to `.env`, add your own NVIDIA API key, and set the model ID you want to use:
+Hawk requires a `.env` file in the same folder as `hawk.exe`. Copy `.env.example` to `.env`, add your NVIDIA API key, and set the model ID you want to use:
 
 ```dotenv
 NVIDIA_API_KEY=nvapi-your-key-here
