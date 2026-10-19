@@ -116,7 +116,7 @@ def main():
         failures += not ok
 
         with open(paths[4], "w", encoding="utf-8", newline="") as f:
-            f.write("log PHASE_B_INSPECT_MUST_NOT_RUN\\nbrowser navigate https://example.com\\n")
+            f.write("log PHASE_B_INSPECT_MUST_NOT_RUN\nbrowser navigate https://example.com\n")
         r = run("--dry-run", "--run", f"workflow inspect {names[4]}")
         output = r.stdout + r.stderr
         ok = (r.returncode == 0 and "workflow preflight:" in output
