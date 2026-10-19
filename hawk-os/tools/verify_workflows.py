@@ -127,6 +127,13 @@ def main():
               and "review item(s)" in output and "browser" in output
               and "sentinel" not in output and not os.path.exists(inspect_side_effect))
         print(f"workflow preflight is read-only outside dry-run: {'PASS' if ok else 'FAIL'}")
+        if not ok:
+            print(f"  exit={r.returncode}; report_present={'workflow preflight:' in output}; "
+                  f"review_count_present={'review item(s)' in output}; browser_flag={'browser' in output}; "
+                  f"argument_redacted={'sentinel' not in output}; side_effect_absent={not os.path.exists(inspect_side_effect)}")
+            print("  output tail:")
+            for line in output.splitlines()[-10:]:
+                print("   ", line)
         failures += not ok
         if os.path.exists(inspect_side_effect):
             os.remove(inspect_side_effect)
