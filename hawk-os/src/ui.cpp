@@ -77,7 +77,7 @@ struct UiState {
     HWND lbl_goal = nullptr, lbl_script = nullptr, lbl_log = nullptr;
     HWND btn_goal = nullptr, btn_script = nullptr, btn_stop = nullptr, btn_capture = nullptr;
     HWND btn_folder = nullptr, btn_settings = nullptr, btn_clear = nullptr;
-    HWND chk_dry = nullptr, chk_click = nullptr, chk_restore = nullptr, chk_autorun = nullptr;
+    HWND chk_dry = nullptr, chk_restore = nullptr, chk_autorun = nullptr;
     HWND quick1 = nullptr, quick2 = nullptr, quick3 = nullptr, quick4 = nullptr;
 
     HFONT f_ui = nullptr, f_bold = nullptr, f_title = nullptr, f_mono = nullptr, f_label = nullptr, f_icon = nullptr;
@@ -334,12 +334,6 @@ static void paint(HWND hwnd) {
     TextOutW(mem, goal_card.left + 18, goal_card.top + 15, L"01   TASK BRIEF", 15);
     SelectObject(mem, g_ui->f_ui);
     SetTextColor(mem, C_MUTED);
-    const wchar_t* goal_hint = L"Describe the outcome. Hawk plans, captures context when needed, then acts.";
-    RECT gh{goal_card.left + 18, goal_card.top + 42, goal_card.right - 16, goal_card.top + 76};
-    DrawTextW(mem, goal_hint, -1, &gh, DT_LEFT | DT_WORDBREAK);
-    TextOutW(mem, goal_card.left + 18, goal_card.top + 91,
-             g_cfg.api_key.empty() ? L"NVIDIA connection needs setup" : L"Model: NVIDIA NIM connected from .env",
-             -1);
 
     SelectObject(mem, g_ui->f_bold);
     SetTextColor(mem, C_TEXT);
@@ -433,7 +427,6 @@ static void layout(HWND hwnd) {
     MoveWindow(g_ui->lbl_log, log_x + 18, label_y, col_w - 36, 16, TRUE);
     MoveWindow(g_ui->log, log_x + 18, script_y, col_w - 36, field_h, TRUE);
 
-    MoveWindow(g_ui->chk_click, -500, -500, 1, 1, FALSE);
 }
 
 // Publish the window and control geometry in screen pixels. This is what lets
@@ -462,7 +455,7 @@ static void dump_layout(HWND hwnd) {
         {"run_script", g_ui->btn_script}, {"stop", g_ui->btn_stop},
         {"capture", g_ui->btn_capture}, {"settings", g_ui->btn_settings},
         {"shots_folder", g_ui->btn_folder}, {"clear", g_ui->btn_clear},
-        {"dry_run", g_ui->chk_dry},     {"click_through", g_ui->chk_click},
+        {"dry_run", g_ui->chk_dry},
         {"auto_run", g_ui->chk_autorun}, {"hello_harry", g_ui->quick3},
         {"notepad_demo", g_ui->quick2}, {"help", g_ui->quick4},
     };
@@ -771,7 +764,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_ui->chk_restore, BM_SETCHECK, BST_CHECKED, 0);
             SendMessageW(g_ui->chk_autorun, BM_SETCHECK, BST_UNCHECKED, 0);
 
-            for (HWND h : {g_ui->goal, g_ui->chk_dry, g_ui->chk_restore, g_ui->chk_click,
+            for (HWND h : {g_ui->goal, g_ui->chk_dry, g_ui->chk_restore,
                            g_ui->chk_autorun})
                 set_font(h, g_ui->f_ui);
             for (HWND h : {g_ui->lbl_goal, g_ui->lbl_script, g_ui->lbl_log})
