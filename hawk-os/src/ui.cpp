@@ -1106,7 +1106,8 @@ int run_gui(HINSTANCE inst, Config cfg) {
                                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, v.x + 40, v.y + 40, w, h,
                                 nullptr, nullptr, inst, nullptr);
     if (!hwnd) return 1;
-    ShowWindow(hwnd, SW_SHOW);
+    // Gentle native fade-in on launch; no external animation dependency.
+    AnimateWindow(hwnd, 180, AW_BLEND);
     UpdateWindow(hwnd);
     // Come to the front: the user just launched this, it should not open behind
     // whatever was focused before.
