@@ -119,7 +119,7 @@ def main():
         if os.path.exists(inspect_side_effect):
             os.remove(inspect_side_effect)
         with open(paths[4], "w", encoding="utf-8", newline="") as f:
-            f.write("write phase-d-inspect-must-not-run.txt sentinel\\nbrowser navigate https://example.com\\n")
+            f.write("write phase-d-inspect-must-not-run.txt sentinel\nbrowser navigate https://example.com\n")
         # Intentionally omit --dry-run: inspect itself must never execute workflow steps.
         r = run("--run", f"workflow inspect {names[4]}")
         output = r.stdout + r.stderr
