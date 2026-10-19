@@ -71,3 +71,12 @@ jobs:
         run: |
           cd hawk-os
           python tools/verify_phase_c.py
+
+      - name: Publish Windows build artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hawk-os-windows
+          path: hawk-os/hawk.exe
+          if-no-files-found: error
+          retention-days: 14
