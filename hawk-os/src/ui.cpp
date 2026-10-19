@@ -755,9 +755,6 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_ui->chk_restore = CreateWindowExW(0, L"BUTTON", L"Restore cursor",
                                                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                                 hwnd, (HMENU)ID_CHK_RESTORE, nullptr, nullptr);
-            g_ui->chk_click = CreateWindowExW(0, L"BUTTON", L"Click-through",
-                                              WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
-                                              hwnd, (HMENU)ID_CHK_CLICKTHRU, nullptr, nullptr);
             g_ui->chk_autorun = CreateWindowExW(0, L"BUTTON", L"Auto-run (risky)",
                                                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10,
                                                 hwnd, (HMENU)ID_CHK_AUTORUN, nullptr, nullptr);
