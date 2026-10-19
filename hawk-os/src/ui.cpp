@@ -54,19 +54,19 @@ enum {
 static const int HEADER_H = 62;
 #define HEADER_TOP() (HEADER_H + 10)
 
-static const COLORREF C_BG = RGB(22, 22, 26);
-static const COLORREF C_PANEL = RGB(30, 30, 35);
-static const COLORREF C_HEADER1 = RGB(44, 44, 52);
-static const COLORREF C_HEADER2 = RGB(26, 26, 31);
-static const COLORREF C_TEXT = RGB(236, 236, 242);
-static const COLORREF C_MUTED = RGB(148, 148, 158);
-static const COLORREF C_ACCENT = RGB(10, 132, 255);
+static const COLORREF C_BG = RGB(10, 14, 20);
+static const COLORREF C_PANEL = RGB(17, 24, 34);
+static const COLORREF C_HEADER1 = RGB(25, 43, 61);
+static const COLORREF C_HEADER2 = RGB(10, 15, 23);
+static const COLORREF C_TEXT = RGB(240, 247, 255);
+static const COLORREF C_MUTED = RGB(143, 164, 184);
+static const COLORREF C_ACCENT = RGB(0, 190, 255);
 static const COLORREF C_DANGER = RGB(214, 62, 54);
-static const COLORREF C_BTN = RGB(54, 54, 62);
-static const COLORREF C_BTN_HI = RGB(70, 70, 80);
-static const COLORREF C_LINE = RGB(60, 60, 68);
-static const COLORREF C_FIELD = RGB(17, 17, 20);
-static const COLORREF C_OK = RGB(70, 200, 120);
+static const COLORREF C_BTN = RGB(29, 42, 57);
+static const COLORREF C_BTN_HI = RGB(40, 59, 78);
+static const COLORREF C_LINE = RGB(39, 58, 76);
+static const COLORREF C_FIELD = RGB(9, 15, 23);
+static const COLORREF C_OK = RGB(70, 230, 170);
 static const COLORREF C_WARN = RGB(255, 190, 70);
 static const COLORREF C_OFF = RGB(120, 120, 132);
 
@@ -250,7 +250,7 @@ static void start_job(const std::string& kind, const std::string& payload) {
 static void compute_preview_rect(HWND hwnd) {
     RECT rc;
     GetClientRect(hwnd, &rc);
-    int left_w = (int)((rc.right - rc.left) * 0.62);
+    int left_w = (int)((rc.right - rc.left) * 0.57);
     if (left_w < 420) left_w = 420;
     int top = HEADER_TOP();
     int avail_w = left_w - 36;
@@ -312,10 +312,10 @@ static void paint(HWND hwnd) {
 
     HGDIOBJ oldf = SelectObject(mem, g_ui->f_title);
     SetTextColor(mem, C_TEXT);
-    TextOutW(mem, 20, 12, L"Hawk OS", 7);
+    TextOutW(mem, 20, 12, L"HAWK OS", 7);
     SelectObject(mem, g_ui->f_ui);
     SetTextColor(mem, C_MUTED);
-    std::wstring sub = L"desktop control agent  v" + wide(HAWK_VERSION) + L"   -   " +
+    std::wstring sub = L"DESKTOP AGENT  /  v" + wide(HAWK_VERSION) + L"   /   " +
                        wide(g_ui->status_text);
     TextOutW(mem, 20, 38, sub.c_str(), (int)sub.size());
 
@@ -349,8 +349,8 @@ static void paint(HWND hwnd) {
     // left: the live screen
     Rect pr = g_ui->preview_rect;
     if (!g_ui->preview.empty() && pr.w > 10) {
-        draw_round(mem, RECT{pr.x - 3, pr.y - 3, pr.x + pr.w + 3, pr.y + pr.h + 3}, 6,
-                   RGB(12, 12, 14), C_LINE, true);
+        draw_round(mem, RECT{pr.x - 4, pr.y - 4, pr.x + pr.w + 4, pr.y + pr.h + 4}, 10,
+                   RGB(7, 11, 17), C_LINE, true);
 
         BITMAPINFO bmi{};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -569,7 +569,7 @@ static void draw_button(LPDRAWITEMSTRUCT di) {
     bool hot = g_hover == di->hwndItem;
 
     COLORREF fill = C_BTN;
-    if (is_goal) fill = pressed ? RGB(0, 100, 200) : C_ACCENT;
+    if (is_goal) fill = pressed ? RGB(0, 135, 185) : C_ACCENT;
     else if (is_stop) fill = pressed ? RGB(170, 40, 34) : C_DANGER;
     else fill = pressed ? RGB(44, 44, 52) : (hot ? C_BTN_HI : C_BTN);
     if (disabled) fill = RGB(42, 42, 48);
@@ -601,17 +601,17 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             g_cfg_key = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_PASSWORD,
-                                        20, 62, 420, 26, hwnd, nullptr, nullptr, nullptr);
+                                        24, 62, 500, 28, hwnd, nullptr, nullptr, nullptr);
             g_cfg_url = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wide(g_cfg.base_url).c_str(),
-                                        WS_CHILD | WS_VISIBLE, 20, 128, 420, 26, hwnd, nullptr,
+                                        WS_CHILD | WS_VISIBLE, 24, 128, 500, 28, hwnd, nullptr,
                                         nullptr, nullptr);
             g_cfg_model = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wide(g_cfg.model).c_str(),
-                                          WS_CHILD | WS_VISIBLE, 20, 194, 420, 26, hwnd, nullptr,
+                                          WS_CHILD | WS_VISIBLE, 24, 194, 500, 28, hwnd, nullptr,
                                           nullptr, nullptr);
             HWND save = CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                                        20, 240, 100, 30, hwnd, (HMENU)ID_BTN_SETTINGS, nullptr, nullptr);
+                                        24, 286, 100, 32, hwnd, (HMENU)ID_BTN_SETTINGS, nullptr, nullptr);
             HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                                          130, 240, 100, 30, hwnd, (HMENU)(ID_BTN_SETTINGS + 1),
+                                          136, 286, 100, 32, hwnd, (HMENU)(ID_BTN_SETTINGS + 1),
                                           nullptr, nullptr);
             for (HWND h : {g_cfg_key, g_cfg_url, g_cfg_model}) set_font(h, g_ui->f_ui);
             set_font(save, g_ui->f_ui);
@@ -677,15 +677,18 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, C_TEXT);
             HGDIOBJ old = SelectObject(dc, g_ui->f_bold);
-            TextOutW(dc, 20, 18, L"Model settings", 14);
+            TextOutW(dc, 24, 18, L"MODEL CONNECTION", 16);
             SelectObject(dc, g_ui->f_ui);
             SetTextColor(dc, C_MUTED);
-            const wchar_t* l1 = L"API key (encrypted with Windows DPAPI for this Windows user)";
-            const wchar_t* l2 = L"Base URL (OpenAI-compatible, .../v1)";
-            const wchar_t* l3 = L"Model id - must be able to SEE screenshots (default is NVIDIA's vision model)";
-            TextOutW(dc, 20, 40, l1, (int)wcslen(l1));
-            TextOutW(dc, 20, 108, l2, (int)wcslen(l2));
-            TextOutW(dc, 20, 174, l3, (int)wcslen(l3));
+            const wchar_t* l1 = L"NVIDIA API key (masked here; saved encrypted with Windows DPAPI)";
+            const wchar_t* l2 = L"OpenAI-compatible API base URL";
+            const wchar_t* l3 = L"Vision-capable model ID (default uses NVIDIA Nemotron vision)";
+            TextOutW(dc, 24, 40, l1, (int)wcslen(l1));
+            TextOutW(dc, 24, 106, l2, (int)wcslen(l2));
+            TextOutW(dc, 24, 172, l3, (int)wcslen(l3));
+            SetTextColor(dc, C_ACCENT);
+            const wchar_t* l4 = L"Tip: create .env beside hawk.exe with NVIDIA_API_KEY, NVIDIA_MODEL and NVIDIA_BASE_URL.";
+            TextOutW(dc, 24, 238, l4, (int)wcslen(l4));
             SelectObject(dc, old);
             EndPaint(hwnd, &ps);
             return 0;
@@ -716,9 +719,9 @@ static void open_settings(HWND owner) {
     RECT orc{};
     GetWindowRect(owner, &orc);
     g_cfg_wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"HawkSettings",
-                                L"Hawk OS - model settings",
+                                L"HAWK OS - model connection",
                                 WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-                                orc.left + 160, orc.top + 120, 470, 320, owner, nullptr,
+                                orc.left + 160, orc.top + 120, 570, 370, owner, nullptr,
                                 wc.hInstance, nullptr);
     if (!g_cfg_wnd) return;
     SetForegroundWindow(g_cfg_wnd);
