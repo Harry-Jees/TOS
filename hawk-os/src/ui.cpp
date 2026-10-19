@@ -82,12 +82,6 @@ struct UiState {
 
     HFONT f_ui = nullptr, f_bold = nullptr, f_title = nullptr, f_mono = nullptr, f_label = nullptr, f_icon = nullptr;
     HBRUSH b_bg = nullptr, b_panel = nullptr, b_field = nullptr, b_log = nullptr;
-    Image preview;
-    Rect preview_rect{};      // where the screen image is drawn (client coords)
-    double preview_scale = 1.0;
-    Point last_click{-1, -1};
-    DWORD suppress_click_until = 0;
-    bool click_through = false;
     bool dry_run = false;
     bool auto_run = false;
     bool follow_log = true;
@@ -248,27 +242,6 @@ static void start_job(const std::string& kind, const std::string& payload) {
 }
 
 // ------------------------------------------------------------- preview ------
-static void compute_preview_rect(HWND hwnd) {
-    RECT rc;
-    GetClientRect(hwnd, &rc);
-    int left_w = (int)((rc.right - rc.left) * 0.57);
-    if (left_w < 420) left_w = 420;
-    int top = HEADER_TOP();
-    int avail_w = left_w - 36;
-    int avail_h = rc.bottom - top - 70;
-    if (avail_w < 80) avail_w = 80;
-    if (avail_h < 80) avail_h = 80;
-
-    Rect v = virtual_desktop();
-    double sx = avail_w / (double)v.w;
-    double sy = avail_h / (double)v.h;
-    double s = sx < sy ? sx : sy;
-    if (s > 1.0) s = 1.0;
-    int w = (int)(v.w * s), h = (int)(v.h * s);
-    g_ui->preview_scale = s;
-    g_ui->preview_rect = Rect{26, top + 26, w, h};
-}
-
 // --------------------------------------------------------------- painting ---
 static void draw_round(HDC dc, RECT r, int radius, COLORREF fill, COLORREF border, bool has_border) {
     HBRUSH br = CreateSolidBrush(fill);
@@ -439,7 +412,6 @@ static void layout(HWND hwnd) {
     MoveWindow(g_ui->chk_dry, margin + 18, 248, 112, 22, TRUE);
     MoveWindow(g_ui->chk_restore, margin + 138, 248, 142, 22, TRUE);
     MoveWindow(g_ui->chk_autorun, margin + 292, 248, 132, 22, TRUE);
-    MoveWindow(g_ui->chk_click, -500, -500, 1, 1, FALSE);
 
     const int panel_top = 280;
     const int panel_bottom = rc.bottom - 18;
@@ -461,7 +433,6 @@ static void layout(HWND hwnd) {
     MoveWindow(g_ui->lbl_log, log_x + 18, label_y, col_w - 36, 16, TRUE);
     MoveWindow(g_ui->log, log_x + 18, script_y, col_w - 36, field_h, TRUE);
 
-    // Click-through has no preview in the redesigned UI; hide the legacy toggle.
     MoveWindow(g_ui->chk_click, -500, -500, 1, 1, FALSE);
 }
 
@@ -943,13 +914,6 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     SetWindowTextW(g_ui->chk_dry, g_ui->dry_run ? L"Dry run: ON" : L"Dry run");
                     log_append(LogLine{"info", g_ui->dry_run ? "dry run on: nothing will be touched"
                                                              : "dry run off: actions are real"});
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                    return 0;
-                case ID_CHK_CLICKTHRU:
-                    g_ui->click_through =
-                        SendMessageW(g_ui->chk_click, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                    SetWindowTextW(g_ui->chk_click, g_ui->click_through ? L"Click-through: ON"
-                                                                       : L"Click-through");
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 case ID_CHK_AUTORUN: {
