@@ -9,7 +9,7 @@ real button goes down. It can screenshot everything it does, so you can see
 exactly what happened afterwards.
 
 ```
-hawk.exe                      the app window (live screen + Agent panel)
+hawk.exe                      the app window (task-focused control center)
 hawk.exe --selftest           prove capture + physical input work on this PC
 hawk.exe --run "..."          execute agent commands
 hawk.exe --goal "..."         ask a vision model to plan (plan-only by default)
@@ -79,56 +79,19 @@ Get a key from NVIDIA's API catalog. Use a vision-capable model if you want scre
 
 ## 2. The app window
 
-One dark window, no menus to hunt through:
+The refreshed control center is task-first and does **not** embed a screenshot preview:
 
-* **Left** — a live, scaled view of your screen, refreshed ~6 times a second,
-  with a green crosshair on the real cursor and a red ring on the last click it
-  made. Tick **Click-through** and clicking the preview really clicks your
-  screen at that point (with self-click suppression so it cannot loop).
-* **Right** — the **Agent**: a goal box, a script box, Run goal / Run script /
-  **STOP**, Capture, Shots folder, Model settings, and an activity log with
-  timestamps and level tags.
-* A **run-state pill** in the header (IDLE / RUNNING / AGENT RUNNING /
-  STOPPING) and a **DRY RUN** pill whenever nothing will be touched, so the
-  mode of the next action is readable across the room.
-* Quick actions load working examples: *Click middle*, *Notepad demo*, *Help*.
-* The window publishes its own geometry to `ui-layout.txt`, which is how a test
-  (or another Hawk OS run) can click the app's buttons by coordinate.
+- **Task brief** — describe what you want Hawk to accomplish, then run the goal.
+- **Quick start** — load a click demo, Notepad demo, Hello Harry workflow, or command help.
+- **Workspace** — edit the generated script and review a timestamped activity feed side by side.
+- **Execution controls** — Run goal, Run script, STOP, Dry run, Restore cursor, and the explicitly confirmed Auto-run option.
+- **NVIDIA setup** — view model preferences and the `.env` setup instructions; the API key is never entered in the UI.
+- **Capture** — save a screenshot into `shots/` when requested. The app does not display that screenshot.
+- **Status** — a clear Ready / Working / Stopping / Set up NVIDIA key indicator, with a subtle animated activity pulse while a job is running.
 
-**Model settings** (the *Model* button) stores a base URL, model id, and a
-Windows DPAPI-protected API key in `hawk.ini` next to the executable. Legacy
-plaintext keys are still read for migration; saving settings rewrites them in
-protected form. The key is never intentionally printed to the log, screen, or
-terminal. Screenshot upload is opt-in: the desktop UI asks before a vision goal
-sends screen content to the configured provider. In CLI mode, pass
-`--allow-screen-upload` explicitly with `--goal` to permit that upload; without
-it, image-bearing requests fail closed. Any OpenAI-compatible endpoint works — NVIDIA
-NIM is the default (`https://integrate.api.nvidia.com/v1`) with a vision model
-that can actually read screenshots (`nvidia/nemotron-3.5-super-vl-120b-a12b`,
-NVIDIA's first-party vision-language model). Put `NVIDIA_API_KEY` in `.env`; the app intentionally rejects keys from environment variables or CLI flags.
+Hawk captures screen context only when a task needs it or when you press Capture; it does not continuously capture the desktop in the background. Vision goals still require consent before a screenshot is sent to NVIDIA NIM.
 
-**Run goal** is built for multi-step tasks, not one-shot clicks — "open my
-editor, write this code, save it and open it again" is the shape of task it is
-for. It works in three phases, all grounded in fresh screenshots:
-
-1. **Plan** — the goal, a fresh screenshot (downscaled, overlaid with a labelled
-   coordinate grid and the mouse position), a local analysis of the controls
-   detected on that screenshot, and the window list go to the model, which
-   writes the *complete* script for the whole task.
-2. **Execute** — Hawk runs the script in segments through its own verified step
-   engine. Each command's real result (ok or fail) is recorded; a failed step
-   stops the segment instead of ploughing on.
-3. **Verify** — after each segment (and after any failure) a new screenshot plus
-   the execution transcript goes back to the model. It answers `done` (only a
-   later screenshot may declare that), `continue`, or a small batch of
-   corrective commands that are inserted in front of the remaining plan.
-
-The generated script is always shown in the script box and saved to
-`workspace/`, so "the agent wrote a script and ran it" leaves something you can
-re-run. If a model request fails, it reports the error rather than silently
-substituting a guessed script. A model key is required for screenshot-based
-planning; without one, supported simple goals can still use the built-in
-planner, and existing scripts can still be run directly.
+The **Model** button lets you adjust the non-secret model ID and endpoint. The API key is read exclusively from `.env` beside `hawk.exe`; old keys in `hawk.ini`, process environment variables, and CLI key options are ignored. Keep `.env` private and restart Hawk after changing the key.
 
 ## 3. Build
 
@@ -248,7 +211,7 @@ hawk-os/
   src/winctl.cpp      window enumeration, lookup, focus
   src/agent.cpp       the command language, the step loop, the model client
   src/uia.cpp         Windows UI Automation accessibility-tree perception
-  src/ui.cpp          the app window, preview, ownerdraw controls, worker thread
+  src/ui.cpp          the task control center, owner-drawn controls, worker thread
   src/main.cpp        entry point, CLI, self-test
   tests/              non-interactive safety regression tests and other test helpers
   tools/              verify_goal_loop.py (offline goal-loop checks) + probes
