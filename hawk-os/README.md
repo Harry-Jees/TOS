@@ -63,6 +63,20 @@ sclick 320 480  # click the button at 320,480 of that screenshot
 findarea FF840A 60 click   # or: click the biggest blue region on screen
 ```
 
+## NVIDIA model configuration
+
+Hawk reads an optional `.env` file from the same folder as `hawk.exe` at startup. Copy `.env.example` to `.env`, add your own NVIDIA API key, and set the model ID you want to use:
+
+```dotenv
+NVIDIA_API_KEY=nvapi-your-key-here
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b
+```
+
+Get a key from NVIDIA's API catalog. Use a vision-capable model if you want screenshot-based planning. The model ID is sent with the OpenAI-compatible chat-completions request; Hawk does not download model weights to your PC. The API runs remotely through NVIDIA NIM.
+
+**Keep `.env` private.** It is ignored by Git. Never paste a real key into source code, screenshots, issues, or commits. The app also supports encrypted `hawk.ini` settings and process variables (`NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL` or the `HAWK_*` equivalents). Process variables override files; CLI flags override settings. The Model Connection dialog saves keys in Windows DPAPI-protected form.
+
 ## 2. The app window
 
 One dark window, no menus to hunt through:
