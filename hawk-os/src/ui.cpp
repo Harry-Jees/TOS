@@ -687,7 +687,7 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TextOutW(dc, 24, 106, l2, (int)wcslen(l2));
             TextOutW(dc, 24, 172, l3, (int)wcslen(l3));
             SetTextColor(dc, C_ACCENT);
-            const wchar_t* l4 = L"Tip: create .env beside hawk.exe with NVIDIA_API_KEY, NVIDIA_MODEL and NVIDIA_BASE_URL.";
+            const wchar_t* l4 = L"Tip: .env beside hawk.exe: NVIDIA_API_KEY / NVIDIA_MODEL / NVIDIA_BASE_URL.";
             TextOutW(dc, 24, 238, l4, (int)wcslen(l4));
             SelectObject(dc, old);
             EndPaint(hwnd, &ps);
