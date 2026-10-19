@@ -1,0 +1,119 @@
+name: Hawk Debian Package (Wine compatibility)
+
+on:
+  push:
+    paths:
+      - "hawk-os/**"
+      - ".github/workflows/hawk-linux-package.yml"
+  pull_request:
+    paths:
+      - "hawk-os/**"
+      - ".github/workflows/hawk-linux-package.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hawk-linux-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install cross-compiler and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 dpkg-dev zip
+
+      - name: Build Windows desktop agent
+        working-directory: hawk-os
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build dist
+          x86_64-w64-mingw32-windres assets/hawk.rc -O coff -o build/hawk_res.o
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -static -o dist/hawk.exe \
+            src/util.cpp src/image.cpp src/capture.cpp src/input.cpp src/winctl.cpp \
+            src/recorder.cpp src/browser.cpp src/agent.cpp src/uia.cpp src/ui.cpp src/main.cpp \
+            build/hawk_res.o \
+            -luser32 -lgdi32 -lshell32 -lwinhttp -lmsimg32 -lcomctl32 -ldwmapi \
+            -lole32 -lwindowscodecs -lcrypt32 -luiautomationcore -loleaut32 -luuid \
+            -Wl,--subsystem,windows
+          file dist/hawk.exe
+
+      - name: Run offline regressions
+        working-directory: hawk-os
+        run: |
+          python3 tools/verify_ui.py
+          python3 tests/test_security.py
+          python3 tools/verify_goal_loop.py
+          python3 tools/verify_phase_a.py
+          python3 tools/verify_workflows.py
+          python3 tools/verify_phase_c.py
+
+      - name: Package .deb wrapper requiring Wine
+        working-directory: hawk-os
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          PKG="hawk-os-wine_${VERSION}_amd64"
+          ROOT="$PWD/dist/pkg-root"
+          mkdir -p "$ROOT/DEBIAN" "$ROOT/opt/hawk-os" "$ROOT/usr/bin" "$ROOT/usr/share/applications"
+          install -m 0755 dist/hawk.exe "$ROOT/opt/hawk-os/hawk.exe"
+          install -m 0644 .env.example "$ROOT/opt/hawk-os/.env.example"
+          cat > "$ROOT/DEBIAN/control" <<EOF
+          Package: hawk-os-wine
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Depends: wine, xdg-utils
+          Maintainer: Hawk OS contributors
+          Description: Hawk OS desktop agent (Windows build via Wine)
+           Packages the current Win32 Hawk executable with a Wine launcher.
+           This is a compatibility wrapper, not a native Linux port.
+          EOF
+          cat > "$ROOT/usr/bin/hawk-os" <<'EOF'
+          #!/bin/sh
+          set -eu
+          APP_DIR=/opt/hawk-os
+          if ! command -v wine >/dev/null 2>&1; then
+            echo "Hawk OS needs Wine. Install the package dependency and retry." >&2
+            exit 127
+          fi
+          if [ ! -f "$APP_DIR/.env" ]; then
+            echo "Configure NVIDIA_API_KEY in $APP_DIR/.env before using model features." >&2
+            echo "Copy $APP_DIR/.env.example to $APP_DIR/.env and edit it securely." >&2
+          fi
+          cd "$APP_DIR"
+          exec wine "$APP_DIR/hawk.exe" "$@"
+          EOF
+          chmod 0755 "$ROOT/usr/bin/hawk-os"
+          cat > "$ROOT/usr/share/applications/hawk-os.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Hawk OS
+          Comment=Desktop task agent (runs the Windows build through Wine)
+          Exec=hawk-os
+          Terminal=false
+          Categories=Utility;
+          EOF
+          dpkg-deb --root-owner-group --build "$ROOT" "dist/hawk-os-wine_${VERSION}_amd64.deb"
+          dpkg-deb --info "dist/hawk-os-wine_${VERSION}_amd64.deb"
+          rm -rf "$ROOT"
+
+      - name: Publish package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hawk-os-debian-package
+          path: |
+            hawk-os/dist/hawk-os-wine_*_amd64.deb
+            hawk-os/dist/hawk.exe
+          if-no-files-found: error
+          retention-days: 14
