@@ -498,9 +498,10 @@ int run_cli(int argc, char** argv) {
         else if (a == "--steps") { std::string v = next("--steps"); if (!v.empty()) cfg.max_steps = atoi(v.c_str()); }
         else if (a == "--model") cfg.model = next("--model");
         else if (a == "--base-url") cfg.base_url = next("--base-url");
-        // API credentials cannot be supplied via CLI; load_settings reads .env.
-        else if (a == "--key" || a == "--key-file") {
-            printf("API keys must be stored in .env as NVIDIA_API_KEY; CLI key options are disabled.\n");
+        // Never accept credentials from CLI. Keep --key available as the
+        // keyboard-action command (e.g. hawk.exe --key ctrl+s).
+        else if (a == "--key-file") {
+            printf("API keys must be stored in .env as NVIDIA_API_KEY; --key-file is disabled.\n");
             return 2;
         } else if (!command.empty()) {
             if (positional == 0) arg1 = a;
