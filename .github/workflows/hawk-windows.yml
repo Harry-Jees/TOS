@@ -36,6 +36,12 @@ jobs:
           cd hawk-os
           bash build.sh
 
+      - name: Verify refreshed UI and screenshot behavior
+        shell: msys2 {0}
+        run: |
+          cd hawk-os
+          python tools/verify_ui.py
+
       - name: Run non-interactive safety regressions
         shell: msys2 {0}
         run: |
