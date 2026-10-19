@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hawk-os-linux"
+version = "0.1.0"
+description = "Linux-native sandbox inspection agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+hawk-linux = "hawk_linux.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
