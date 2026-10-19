@@ -1,0 +1,10 @@
+# Open a pre-filled Gmail draft to OpenAI Support.
+# Run on the Windows desktop where Gmail is already signed in:
+#   hawk.exe --file examples\openai-support-email.hawk
+# Safe by design: opens the compose draft and STOPS before sending.
+# Review the recipient and message in Gmail, then click Send yourself.
+
+open https://mail.google.com/mail/?view=cm&fs=1&to=support%40openai.com&su=Introduction%20from%20Harry%20Jees%20-%20HAWK%20OS&body=Hello%20OpenAI%20Support%20team%2C%0A%0AMy%20name%20is%20Harry%20Jees%2C%20and%20I%20am%20developing%20HAWK%20OS%2C%20a%20desktop%20AI%20agent.%20I%20would%20appreciate%20guidance%20on%20the%20appropriate%20channel%20to%20share%20the%20project%20or%20connect%20with%20the%20developer%20community.%0A%0ABest%20regards%2C%0AHarry%20Jees%0Aharryjees%40gmail.com
+wait 2500
+log OpenAI Support Gmail draft opened; review recipient and body, then send manually in Gmail.
+done
