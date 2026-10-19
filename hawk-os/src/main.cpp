@@ -43,8 +43,17 @@ static void read_dotenv(Config* cfg) {
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
     char line[4096];
+    bool first_line = true;
     while (fgets(line, sizeof(line), f)) {
         std::string s = trim(line);
+        // Windows editors may save UTF-8 with a BOM; strip it before matching
+        // the first .env variable name.
+        if (first_line) {
+            first_line = false;
+            if (s.size() >= 3 && (unsigned char)s[0] == 0xEF &&
+                (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF)
+                s.erase(0, 3);
+        }
         if (s.empty() || s[0] == '#') continue;
         if (s.rfind("export ", 0) == 0) s = trim(s.substr(7));
         size_t eq = s.find('=');
