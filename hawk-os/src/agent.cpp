@@ -2026,7 +2026,7 @@ bool Agent::llm_chat(const std::string& prompt, const std::string& image_b64,
         return false;
     }
     if (config.api_key.empty()) {
-        *err = "no API key set";
+        *err = "no NVIDIA API key loaded: add NVIDIA_API_KEY to .env beside hawk.exe, then restart Hawk";
         return false;
     }
     if (!image_b64.empty() && !config.allow_screen_upload) {
