@@ -284,10 +284,8 @@ static void draw_round(HDC dc, RECT r, int radius, COLORREF fill, COLORREF borde
 static void paint(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
-    RECT rc;
+    RECT rc{};
     GetClientRect(hwnd, &rc);
-
-    // double buffer to keep the live view from flickering
     HDC mem = CreateCompatibleDC(dc);
     HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
     HGDIOBJ old = SelectObject(mem, bmp);
@@ -295,171 +293,118 @@ static void paint(HWND hwnd) {
     HBRUSH bg = CreateSolidBrush(C_BG);
     FillRect(mem, &rc, bg);
     DeleteObject(bg);
+    SetBkMode(mem, TRANSPARENT);
 
-    // header with a soft vertical gradient
-    RECT head{0, 0, rc.right, HEADER_H};
+    // Refreshed control-center canvas: no embedded screenshot; Hawk captures only
+    // when a task needs vision or the user presses Capture.
+    RECT top{0, 0, rc.right, 94};
     TRIVERTEX verts[2] = {
         {0, 0, (COLOR16)(GetRValue(C_HEADER1) << 8), (COLOR16)(GetGValue(C_HEADER1) << 8),
          (COLOR16)(GetBValue(C_HEADER1) << 8), 0xFF00},
-        {rc.right, HEADER_H, (COLOR16)(GetRValue(C_HEADER2) << 8), (COLOR16)(GetGValue(C_HEADER2) << 8),
-         (COLOR16)(GetBValue(C_HEADER2) << 8), 0xFF00}};
-    GRADIENT_RECT grad{0, 1};
-    if (!GradientFill(mem, verts, 2, &grad, 1, GRADIENT_FILL_RECT_V)) {
+        {rc.right, 94, (COLOR16)(GetRValue(C_BG) << 8), (COLOR16)(GetGValue(C_BG) << 8),
+         (COLOR16)(GetBValue(C_BG) << 8), 0xFF00}};
+    GRADIENT_RECT gr{0, 1};
+    if (!GradientFill(mem, verts, 2, &gr, 1, GRADIENT_FILL_RECT_V)) {
         HBRUSH hb = CreateSolidBrush(C_HEADER1);
-        FillRect(mem, &head, hb);
+        FillRect(mem, &top, hb);
         DeleteObject(hb);
     }
-    SetBkMode(mem, TRANSPARENT);
 
-    HGDIOBJ oldf = SelectObject(mem, g_ui->f_title);
+    SelectObject(mem, g_ui->f_title);
     SetTextColor(mem, C_TEXT);
-    TextOutW(mem, 20, 12, L"HAWK OS", 7);
+    TextOutW(mem, 26, 18, L"HAWK OS", 7);
     SelectObject(mem, g_ui->f_ui);
     SetTextColor(mem, C_MUTED);
-    std::wstring sub = L"DESKTOP AGENT  /  v" + wide(HAWK_VERSION) + L"   /   " +
-                       wide(g_ui->status_text);
-    TextOutW(mem, 20, 38, sub.c_str(), (int)sub.size());
+    const wchar_t* tagline = L"DESKTOP AUTOMATION  /  PRIVATE BY DEFAULT  /  NVIDIA NIM";
+    TextOutW(mem, 28, 52, tagline, (int)wcslen(tagline));
 
-    // Run-state pill, right-aligned in the header: the one thing that should
-    // be readable across the room. Dry-run gets a pill of its own so nobody
-    // mistakes a rehearsal for a real run.
-    const wchar_t* state_txt = L"IDLE";
-    COLORREF state_col = C_OFF;
-    if (g_ui->run_state == "running") {
-        state_txt = g_ui->run_kind == "goal" ? L"AGENT RUNNING" : L"RUNNING";
-        state_col = C_OK;
-    } else if (g_ui->run_state == "stopping") {
-        state_txt = L"STOPPING";
-        state_col = C_WARN;
+    const bool active = g_ui->run_state == "running" || g_ui->run_state == "stopping";
+    COLORREF state_color = active ? C_OK : (g_cfg.api_key.empty() ? C_WARN : C_ACCENT);
+    const wchar_t* state = g_ui->run_state == "stopping" ? L"STOPPING" :
+                           g_ui->run_state == "running" ? L"WORKING" :
+                           g_cfg.api_key.empty() ? L"SET UP NVIDIA KEY" : L"READY";
+    RECT status{rc.right - 210, 25, rc.right - 26, 59};
+    draw_round(mem, status, 16, C_PANEL, state_color, true);
+    if (active) {
+        const int pulse = (int)((GetTickCount() / 110) % 3);
+        for (int i = 0; i < 3; ++i) {
+            RECT dot{status.left + 14 + i * 8, status.top + 14,
+                     status.left + 19 + i * 8, status.top + 19};
+            COLORREF col = i == pulse ? state_color : C_OFF;
+            HBRUSH db = CreateSolidBrush(col);
+            FillRect(mem, &dot, db);
+            DeleteObject(db);
+        }
+    } else {
+        RECT dot{status.left + 15, status.top + 14, status.left + 22, status.top + 21};
+        HBRUSH db = CreateSolidBrush(state_color);
+        HBRUSH ob = (HBRUSH)SelectObject(mem, db);
+        Ellipse(mem, dot.left, dot.top, dot.right, dot.bottom);
+        SelectObject(mem, ob);
+        DeleteObject(db);
     }
-    const int pill_w = 176, pill_h = 30, pill_y = 16;
-    int pill_x = rc.right - 20 - pill_w;
-    if (g_ui->dry_run) {
-        RECT dry{pill_x - 124, pill_y, pill_x - 12, pill_y + pill_h};
-        draw_round(mem, dry, 15, RGB(54, 38, 10), C_WARN, true);
-        SetTextColor(mem, C_WARN);
-        SelectObject(mem, g_ui->f_bold);
-        DrawTextW(mem, L"DRY RUN", -1, &dry, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    }
-    RECT pill{pill_x, pill_y, pill_x + pill_w, pill_y + pill_h};
-    draw_round(mem, pill, 15, RGB(20, 20, 24), state_col, true);
-    SetTextColor(mem, state_col);
     SelectObject(mem, g_ui->f_bold);
-    DrawTextW(mem, state_txt, -1, &pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SetTextColor(mem, state_color);
+    RECT sr{status.left + 31, status.top, status.right - 8, status.bottom};
+    DrawTextW(mem, state, -1, &sr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    // left: the live screen
-    Rect pr = g_ui->preview_rect;
-    if (!g_ui->preview.empty() && pr.w > 10) {
-        draw_round(mem, RECT{pr.x - 4, pr.y - 4, pr.x + pr.w + 4, pr.y + pr.h + 4}, 10,
-                   RGB(7, 11, 17), C_LINE, true);
-
-        BITMAPINFO bmi{};
-        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = g_ui->preview.w;
-        bmi.bmiHeader.biHeight = -g_ui->preview.h;
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB;
-        SetStretchBltMode(mem, HALFTONE);
-        SetBrushOrgEx(mem, 0, 0, nullptr);
-        StretchDIBits(mem, pr.x, pr.y, pr.w, pr.h, 0, 0, g_ui->preview.w, g_ui->preview.h,
-                      g_ui->preview.px.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
-
-        Rect v = virtual_desktop();
-        auto to_preview = [&](Point p) {
-            return Point{pr.x + (int)((p.x - v.x) * g_ui->preview_scale),
-                         pr.y + (int)((p.y - v.y) * g_ui->preview_scale)};
-        };
-
-        // mark the last injected click
-        if (g_ui->last_click.x >= 0) {
-            Point pp = to_preview(g_ui->last_click);
-            HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 70, 70));
-            HGDIOBJ op = SelectObject(mem, pen);
-            HGDIOBJ ob = SelectObject(mem, GetStockObject(NULL_BRUSH));
-            int r = 12;
-            Ellipse(mem, pp.x - r, pp.y - r, pp.x + r, pp.y + r);
-            MoveToEx(mem, pp.x - r - 4, pp.y, nullptr);
-            LineTo(mem, pp.x + r + 4, pp.y);
-            MoveToEx(mem, pp.x, pp.y - r - 4, nullptr);
-            LineTo(mem, pp.x, pp.y + r + 4);
-            SelectObject(mem, op);
-            SelectObject(mem, ob);
-            DeleteObject(pen);
-        }
-
-        // crosshair at the real cursor
-        Point cur = cursor_pos();
-        Point cp = to_preview(cur);
-        HPEN cpen = CreatePen(PS_SOLID, 1, RGB(60, 240, 110));
-        HGDIOBJ op = SelectObject(mem, cpen);
-        MoveToEx(mem, cp.x - 10, cp.y, nullptr);
-        LineTo(mem, cp.x + 10, cp.y);
-        MoveToEx(mem, cp.x, cp.y - 10, nullptr);
-        LineTo(mem, cp.x, cp.y + 10);
-        SelectObject(mem, op);
-        DeleteObject(cpen);
-
-        // "LIVE" chip in the corner of the preview, so it is obvious this is
-        // the real screen and not a picture of one
-        RECT chip{pr.x + 8, pr.y + 8, pr.x + 86, pr.y + 32};
-        draw_round(mem, chip, 12, RGB(12, 14, 16), C_OK, true);
-        SelectObject(mem, g_ui->f_bold);
-        SetTextColor(mem, C_OK);
-        DrawTextW(mem, L"\x25CF LIVE", -1, &chip, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(mem, g_ui->f_ui);
-
-        // caption under the preview
-        SelectObject(mem, g_ui->f_ui);
-        SetTextColor(mem, C_MUTED);
-        char cap[256];
-        snprintf(cap, sizeof(cap),
-                 "live screen %dx%d  shown at %.0f%%   cursor %d,%d   %s",
-                 v.w, v.h, g_ui->preview_scale * 100.0, cur.x, cur.y,
-                 g_ui->click_through ? "click-through ON" : "click-through off");
-        TextOutA(mem, pr.x, pr.y + pr.h + 10, cap, (int)strlen(cap));
-        if (g_ui->click_through) {
-            SelectObject(mem, g_ui->f_bold);
-            SetTextColor(mem, RGB(255, 190, 70));
-            const wchar_t* warn = L"clicking the preview will really click your screen";
-            TextOutW(mem, pr.x, pr.y + pr.h + 28, warn, (int)wcslen(warn));
-        }
-    }
-
-    // right panel background
-    int panel_x = pr.x + pr.w + 34;
-    RECT panel{panel_x - 14, HEADER_TOP() + 8, rc.right - 16, rc.bottom - 14};
-    draw_round(mem, panel, 14, C_PANEL, C_LINE, true);
+    int margin = 24;
+    int card_w = (rc.right - margin * 2 - 14) / 2;
+    int top_y = 112;
+    RECT goal_card{margin, top_y, margin + card_w, top_y + 124};
+    RECT quick_card{margin + card_w + 14, top_y, rc.right - margin, top_y + 124};
+    draw_round(mem, goal_card, 16, C_PANEL, C_LINE, true);
+    draw_round(mem, quick_card, 16, C_PANEL, C_LINE, true);
 
     SelectObject(mem, g_ui->f_bold);
     SetTextColor(mem, C_TEXT);
-    TextOutW(mem, panel_x, HEADER_TOP() + 20, L"Agent", 5);
+    TextOutW(mem, goal_card.left + 18, goal_card.top + 15, L"01   TASK BRIEF", 15);
     SelectObject(mem, g_ui->f_ui);
-    SetTextColor(mem, g_cfg.api_key.empty() ? C_WARN : C_OK);
-    const wchar_t* key_state = g_cfg.api_key.empty() ? L"no model key - script mode only"
-                                                    : L"model key set";
-    TextOutW(mem, panel_x + 60, HEADER_TOP() + 21, key_state, (int)wcslen(key_state));
-    if (!g_cfg.api_key.empty()) {
-        // what it can see with, so the settings are one glance away
-        std::wstring model = L"";
-        for (wchar_t c : wide(g_cfg.model)) {
-            model.push_back(c);
-            if (model.size() >= 34) {
-                model += L"...";
-                break;
-            }
-        }
-        SetTextColor(mem, C_MUTED);
-        TextOutW(mem, panel_x + 60 + 92, HEADER_TOP() + 21, model.c_str(), (int)model.size());
+    SetTextColor(mem, C_MUTED);
+    const wchar_t* goal_hint = L"Describe the outcome. Hawk plans, captures context when needed, then acts.";
+    RECT gh{goal_card.left + 18, goal_card.top + 42, goal_card.right - 16, goal_card.top + 76};
+    DrawTextW(mem, goal_hint, -1, &gh, DT_LEFT | DT_WORDBREAK);
+    TextOutW(mem, goal_card.left + 18, goal_card.top + 91,
+             g_cfg.api_key.empty() ? L"NVIDIA connection needs setup" : L"Model: NVIDIA NIM connected from .env",
+             -1);
+
+    SelectObject(mem, g_ui->f_bold);
+    SetTextColor(mem, C_TEXT);
+    TextOutW(mem, quick_card.left + 18, quick_card.top + 15, L"02   QUICK START", 15);
+    SelectObject(mem, g_ui->f_ui);
+    SetTextColor(mem, C_MUTED);
+    const wchar_t* quick_hint = L"Start with a safe demo, load a script, or capture a screenshot to file.";
+    RECT qh{quick_card.left + 18, quick_card.top + 42, quick_card.right - 16, quick_card.top + 76};
+    DrawTextW(mem, quick_hint, -1, &qh, DT_LEFT | DT_WORDBREAK);
+    SetTextColor(mem, C_ACCENT);
+    const wchar_t* safe_hint = L"DRY RUN is recommended for your first task";
+    TextOutW(mem, quick_card.left + 18, quick_card.top + 91, safe_hint, (int)wcslen(safe_hint));
+
+    RECT work{margin, top_y + 140, rc.right - margin, rc.bottom - 18};
+    draw_round(mem, work, 16, C_PANEL, C_LINE, true);
+    SelectObject(mem, g_ui->f_bold);
+    SetTextColor(mem, C_TEXT);
+    TextOutW(mem, work.left + 18, work.top + 14, L"WORKSPACE", 9);
+    SelectObject(mem, g_ui->f_ui);
+    SetTextColor(mem, C_MUTED);
+    const wchar_t* workspace_hint = L"Edit the generated script, review activity, and control execution below.";
+    TextOutW(mem, work.left + 18, work.top + 38, workspace_hint, (int)wcslen(workspace_hint));
+
+    if (g_ui->dry_run) {
+        RECT dry{rc.right - 144, work.top + 12, rc.right - 28, work.top + 38};
+        draw_round(mem, dry, 12, RGB(53, 39, 17), C_WARN, true);
+        SelectObject(mem, g_ui->f_bold);
+        SetTextColor(mem, C_WARN);
+        DrawTextW(mem, L"DRY RUN ON", -1, &dry, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
     if (!g_ui->last_shot.empty()) {
-        std::wstring shot = L"last shot: " + wide(g_ui->last_shot);
+        std::wstring shot = L"Last capture saved: " + wide(g_ui->last_shot);
+        SelectObject(mem, g_ui->f_ui);
         SetTextColor(mem, C_MUTED);
-        TextOutW(mem, panel_x, rc.bottom - 28, shot.c_str(),
-                 (int)shot.size() > 96 ? 96 : (int)shot.size());
+        RECT r{work.left + 18, work.bottom - 27, work.right - 18, work.bottom - 8};
+        DrawTextW(mem, shot.c_str(), -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
-    SelectObject(mem, oldf);
     BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old);
     DeleteObject(bmp);
@@ -469,52 +414,55 @@ static void paint(HWND hwnd) {
 
 // ---------------------------------------------------------------- layout ----
 static void layout(HWND hwnd) {
-    RECT rc;
+    RECT rc{};
     GetClientRect(hwnd, &rc);
-    compute_preview_rect(hwnd);
-    Rect pr = g_ui->preview_rect;
-    int x = pr.x + pr.w + 34;
-    int w = rc.right - 16 - x;
-    if (w < 300) w = 300;
-    int y = HEADER_TOP() + 42;
+    const int margin = 24;
+    const int gap = 12;
+    const int width = rc.right - margin * 2;
+    const int half = (width - gap) / 2;
+    int y = 154;
 
-    // Every section carries a small caption, and everything below it keeps a
-    // consistent rhythm: caption, field, actions.
-    MoveWindow(g_ui->lbl_goal, x, y, w, 15, TRUE);
-    y += 16;
-    MoveWindow(g_ui->goal, x, y, w, 28, TRUE);
-    y += 34;
-    MoveWindow(g_ui->btn_goal, x, y, 96, 30, TRUE);
-    MoveWindow(g_ui->btn_capture, x + 102, y, 88, 30, TRUE);
-    MoveWindow(g_ui->btn_stop, x + 196, y, 76, 30, TRUE);
-    MoveWindow(g_ui->btn_settings, x + 278, y, 74, 30, TRUE);
-    y += 37;
-    MoveWindow(g_ui->chk_dry, x, y, 116, 20, TRUE);
-    MoveWindow(g_ui->chk_restore, x + 116, y, 142, 20, TRUE);
-    MoveWindow(g_ui->chk_autorun, x + 260, y, 132, 20, TRUE);
-    y += 27;
-    MoveWindow(g_ui->quick1, x, y, 96, 25, TRUE);
-    MoveWindow(g_ui->quick2, x + 102, y, 96, 25, TRUE);
-    MoveWindow(g_ui->quick3, x + 204, y, 96, 25, TRUE);
-    MoveWindow(g_ui->quick4, x + 306, y, 96, 25, TRUE);
-    y += 33;
+    MoveWindow(g_ui->lbl_goal, margin + 18, y, half - 36, 16, TRUE);
+    y += 20;
+    MoveWindow(g_ui->goal, margin + 18, y, half - 36, 32, TRUE);
+    MoveWindow(g_ui->btn_goal, margin + 18, y + 42, 112, 34, TRUE);
+    MoveWindow(g_ui->btn_capture, margin + 138, y + 42, 102, 34, TRUE);
+    MoveWindow(g_ui->btn_stop, margin + 248, y + 42, 82, 34, TRUE);
+    MoveWindow(g_ui->btn_settings, margin + 338, y + 42, 94, 34, TRUE);
 
-    int bottom = rc.bottom - 34;
-    MoveWindow(g_ui->lbl_script, x, y, w, 15, TRUE);
-    y += 16;
-    int script_h = 96;
-    MoveWindow(g_ui->script, x, y, w, script_h, TRUE);
-    int sy = y + script_h + 5;
-    MoveWindow(g_ui->btn_script, x, sy, 92, 26, TRUE);
-    MoveWindow(g_ui->btn_clear, x + 98, sy, 62, 26, TRUE);
-    MoveWindow(g_ui->chk_click, x + 168, sy + 3, 176, 20, TRUE);
-    MoveWindow(g_ui->btn_folder, x + w - 96, sy, 96, 26, TRUE);
-    int ly = sy + 33;
-    MoveWindow(g_ui->lbl_log, x, ly, w, 15, TRUE);
-    ly += 16;
-    int log_h = bottom - ly;
-    if (log_h < 70) log_h = 70;
-    MoveWindow(g_ui->log, x, ly, w, log_h, TRUE);
+    int qx = margin + half + gap + 18;
+    MoveWindow(g_ui->quick1, qx, 195, 96, 30, TRUE);
+    MoveWindow(g_ui->quick2, qx + 104, 195, 104, 30, TRUE);
+    MoveWindow(g_ui->quick3, qx + 216, 195, 104, 30, TRUE);
+    MoveWindow(g_ui->quick4, qx + 328, 195, 80, 30, TRUE);
+
+    MoveWindow(g_ui->chk_dry, margin + 18, 248, 112, 22, TRUE);
+    MoveWindow(g_ui->chk_restore, margin + 138, 248, 142, 22, TRUE);
+    MoveWindow(g_ui->chk_autorun, margin + 292, 248, 132, 22, TRUE);
+    MoveWindow(g_ui->chk_click, -500, -500, 1, 1, FALSE);
+
+    const int panel_top = 280;
+    const int panel_bottom = rc.bottom - 18;
+    const int col_gap = 14;
+    const int col_w = (width - col_gap) / 2;
+    int col_x = margin;
+    int label_y = panel_top + 64;
+    int script_y = label_y + 20;
+    int button_y = panel_bottom - 42;
+    int field_h = button_y - script_y - 40;
+    if (field_h < 70) field_h = 70;
+    MoveWindow(g_ui->lbl_script, col_x + 18, label_y, col_w - 36, 16, TRUE);
+    MoveWindow(g_ui->script, col_x + 18, script_y, col_w - 36, field_h, TRUE);
+    MoveWindow(g_ui->btn_script, col_x + 18, button_y, 104, 30, TRUE);
+    MoveWindow(g_ui->btn_clear, col_x + 130, button_y, 74, 30, TRUE);
+    MoveWindow(g_ui->btn_folder, col_x + col_w - 120, button_y, 102, 30, TRUE);
+
+    int log_x = margin + col_w + col_gap;
+    MoveWindow(g_ui->lbl_log, log_x + 18, label_y, col_w - 36, 16, TRUE);
+    MoveWindow(g_ui->log, log_x + 18, script_y, col_w - 36, field_h, TRUE);
+
+    // Click-through has no preview in the redesigned UI; hide the legacy toggle.
+    MoveWindow(g_ui->chk_click, -500, -500, 1, 1, FALSE);
 }
 
 // Publish the window and control geometry in screen pixels. This is what lets
