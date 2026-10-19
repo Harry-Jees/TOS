@@ -242,3 +242,14 @@ phone or relay.
 The current build remains a prototype. The updated code has not yet been
 validated by a Windows build in this development session; follow the CI status
 and release notes before relying on it.
+
+
+## Debian package (Wine wrapper)
+
+The `.github/workflows/hawk-linux-package.yml` workflow packages the validated
+Windows CI artifact as a Debian `.deb` in its workflow `dist/` directory.
+The package requires Wine and is a compatibility wrapper; it is **not** a
+native Linux port. It does not guarantee that Windows desktop-capture/input
+APIs will control native Linux applications. Download the `hawk-os-debian-package`
+artifact from the packaging workflow run. Do not treat package creation as
+proof of desktop automation; verify the target environment manually first.
