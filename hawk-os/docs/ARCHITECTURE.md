@@ -8,7 +8,7 @@ Hawk must be designed around one shared task-execution core so future Android an
 
 ## Current implementation
 
-- **Win32 UI**: live screen preview, goal/script inputs, run controls, and activity log.
+- **Win32 UI**: task-focused control center with goal/script inputs, run controls, status, and activity log. Screenshots are captured internally when required and are not embedded in the UI.
 - **Agent loop**: screenshot → model plan → command execution → fresh screenshot → verification/correction.
 - **Command runtime**: a small Hawk command language for screenshots, cursor/keyboard/mouse, windows, and workspace files.
 - **Perception**: target-window-aware Windows UI Automation tree traversal plus local pixel/region detection and model vision. UIA may be incomplete for custom-drawn or protected applications.
@@ -77,6 +77,7 @@ Still follow-on work (not implied to be complete by this branch): a fully typed 
 
 ### Stabilize
 - Finish Windows build and regression validation for the current hardening changes.
+- Keep product documentation synchronized with the shipped task-focused UI; do not describe an embedded live screen preview unless it is deliberately reintroduced.
 - Replace the legacy response extraction with a maintained JSON parser when dependency policy is decided.
 - Keep semantic UIA actions as the first choice for accessible controls, with screenshot-grounded input as fallback and fresh observation after state-changing actions.
 - Add cancellable WinHTTP requests and bounded response sizes.
