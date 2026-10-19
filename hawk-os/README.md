@@ -79,7 +79,7 @@ Get a key from NVIDIA's API catalog. Use a vision-capable model if you want scre
 
 ## 2. The app window
 
-The refreshed control center is task-first and does **not** embed a screenshot preview:
+The refreshed control center is task-first and does **not** embed a screenshot preview. Captures are made internally for vision planning or saved to `shots/` when requested; they are not displayed inside the app:
 
 - **Task brief** — describe what you want Hawk to accomplish, then run the goal.
 - **Quick start** — load a click demo, Notepad demo, Hello Harry workflow, or command help.
