@@ -11,6 +11,7 @@ shots/
 workspace/
 
 # settings, including the API key - never commit this
+.env
 hawk.ini
 *.key
 
