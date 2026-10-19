@@ -11,11 +11,12 @@
 namespace hawk {
 
 // ---------------------------------------------------------------- settings --
+// Settings: provider credentials are intentionally sourced ONLY from .env.
+// Other non-secret preferences may still be loaded from hawk.ini.
 static void read_ini(Config* cfg) {
     std::string path = app_dir() + "\\hawk.ini";
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
-    std::string legacy_key, protected_key;
     char line[1024];
     while (fgets(line, sizeof(line), f)) {
         std::string s = trim(line);
@@ -24,25 +25,19 @@ static void read_ini(Config* cfg) {
         if (eq == std::string::npos) continue;
         std::string k = to_lower(trim(s.substr(0, eq)));
         std::string v = trim(s.substr(eq + 1));
-        if (k == "api_key_dpapi") {
-            protected_key = v;
-        } else if (k == "api_key") {
-            // Legacy compatibility: old versions wrote plaintext keys. A
-            // protected key always takes precedence if both settings exist.
-            legacy_key = v;
-        }
-        else if (k == "base_url") cfg->base_url = v;
+        // Deliberately ignore api_key and api_key_dpapi: .env is the sole
+        // startup source for credentials, including legacy hawk.ini files.
+        if (k == "base_url") cfg->base_url = v;
         else if (k == "model") cfg->model = v;
         else if (k == "vision") cfg->vision = (v != "0");
         else if (k == "dry_run") cfg->dry_run = (v == "1" || to_lower(v) == "true");
         else if (k == "step_delay_ms") { try { cfg->step_delay_ms = std::stoi(v); } catch (...) {} }
     }
     fclose(f);
-    cfg->api_key = !protected_key.empty() ? unprotect_secret(protected_key) : legacy_key;
 }
 
-// Optional local .env beside hawk.exe. Keep the real file out of Git; process
-// environment variables and command-line flags still take precedence.
+// Read NVIDIA credentials from the .env file beside hawk.exe. No process
+// environment, command-line, or hawk.ini value can supply/override the key.
 static void read_dotenv(Config* cfg) {
     std::string path = app_dir() + "\\.env";
     FILE* f = fopen(path.c_str(), "r");
@@ -50,7 +45,7 @@ static void read_dotenv(Config* cfg) {
     char line[4096];
     while (fgets(line, sizeof(line), f)) {
         std::string s = trim(line);
-        if (s.empty() || s[0] == '#' ) continue;
+        if (s.empty() || s[0] == '#') continue;
         if (s.rfind("export ", 0) == 0) s = trim(s.substr(7));
         size_t eq = s.find('=');
         if (eq == std::string::npos) continue;
@@ -59,11 +54,9 @@ static void read_dotenv(Config* cfg) {
         if (v.size() >= 2 && ((v.front() == '"' && v.back() == '"') ||
                               (v.front() == '\'' && v.back() == '\'')))
             v = v.substr(1, v.size() - 2);
-        // Only recognised provider settings are read; no shell expansion or
-        // arbitrary code execution is performed.
-        if (k == "NVIDIA_API_KEY" || k == "HAWK_API_KEY") cfg->api_key = v;
-        else if (k == "NVIDIA_BASE_URL" || k == "HAWK_BASE_URL") cfg->base_url = v;
-        else if (k == "NVIDIA_MODEL" || k == "HAWK_MODEL") cfg->model = v;
+        if (k == "NVIDIA_API_KEY") cfg->api_key = v;
+        else if (k == "NVIDIA_BASE_URL") cfg->base_url = v;
+        else if (k == "NVIDIA_MODEL") cfg->model = v;
     }
     fclose(f);
 }
@@ -73,18 +66,14 @@ static const char* env_or_null(const char* name) {
     return (v && *v) ? v : nullptr;
 }
 
-// Settings come from hawk.ini next to the executable, then environment
-// variables, then command line flags. The key is never printed anywhere.
+// Credentials come exclusively from .env. Provider endpoint/model can still
+// be overridden by environment for diagnostics, but the API key cannot.
 void load_settings(Config* cfg) {
+    cfg->api_key.clear();
     read_ini(cfg);
     read_dotenv(cfg);
-    // Process-level environment wins over local files (useful for automation/CI).
-    if (const char* v = env_or_null("NVIDIA_API_KEY")) cfg->api_key = v;
     if (const char* v = env_or_null("NVIDIA_BASE_URL")) cfg->base_url = v;
     if (const char* v = env_or_null("NVIDIA_MODEL")) cfg->model = v;
-    if (const char* v = env_or_null("HAWK_API_KEY")) cfg->api_key = v;
-    if (const char* v = env_or_null("HAWK_BASE_URL")) cfg->base_url = v;
-    if (const char* v = env_or_null("HAWK_MODEL")) cfg->model = v;
 }
 
 static void usage() {
