@@ -392,20 +392,20 @@ static void layout(HWND hwnd) {
     MoveWindow(g_ui->lbl_goal, margin + 18, y, half - 36, 16, TRUE);
     y += 20;
     MoveWindow(g_ui->goal, margin + 18, y, half - 36, 32, TRUE);
-    MoveWindow(g_ui->btn_goal, margin + 18, y + 42, 112, 34, TRUE);
-    MoveWindow(g_ui->btn_capture, margin + 138, y + 42, 102, 34, TRUE);
-    MoveWindow(g_ui->btn_stop, margin + 248, y + 42, 82, 34, TRUE);
-    MoveWindow(g_ui->btn_settings, margin + 338, y + 42, 94, 34, TRUE);
+    MoveWindow(g_ui->btn_goal, margin + 18, y + 42, 100, 34, TRUE);
+    MoveWindow(g_ui->btn_capture, margin + 124, y + 42, 86, 34, TRUE);
+    MoveWindow(g_ui->btn_stop, margin + 218, y + 42, 68, 34, TRUE);
+    MoveWindow(g_ui->btn_settings, margin + 294, y + 42, 88, 34, TRUE);
 
     int qx = margin + half + gap + 18;
-    MoveWindow(g_ui->quick1, qx, 195, 96, 30, TRUE);
-    MoveWindow(g_ui->quick2, qx + 104, 195, 104, 30, TRUE);
-    MoveWindow(g_ui->quick3, qx + 216, 195, 104, 30, TRUE);
-    MoveWindow(g_ui->quick4, qx + 328, 195, 80, 30, TRUE);
+    MoveWindow(g_ui->quick1, qx, 195, 84, 30, TRUE);
+    MoveWindow(g_ui->quick2, qx + 88, 195, 94, 30, TRUE);
+    MoveWindow(g_ui->quick3, qx + 186, 195, 94, 30, TRUE);
+    MoveWindow(g_ui->quick4, qx + 284, 195, 70, 30, TRUE);
 
-    MoveWindow(g_ui->chk_dry, margin + 18, 248, 112, 22, TRUE);
-    MoveWindow(g_ui->chk_restore, margin + 138, 248, 142, 22, TRUE);
-    MoveWindow(g_ui->chk_autorun, margin + 292, 248, 132, 22, TRUE);
+    MoveWindow(g_ui->chk_dry, margin + 18, 248, 96, 22, TRUE);
+    MoveWindow(g_ui->chk_restore, margin + 120, 248, 120, 22, TRUE);
+    MoveWindow(g_ui->chk_autorun, margin + 246, 248, 128, 22, TRUE);
 
     const int panel_top = 280;
     const int panel_bottom = rc.bottom - 18;
