@@ -600,23 +600,13 @@ static bool g_cfg_saved = false;
 static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
-            g_cfg_key = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_PASSWORD,
-                                        24, 62, 500, 28, hwnd, nullptr, nullptr, nullptr);
-            g_cfg_url = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wide(g_cfg.base_url).c_str(),
-                                        WS_CHILD | WS_VISIBLE, 24, 128, 500, 28, hwnd, nullptr,
-                                        nullptr, nullptr);
-            g_cfg_model = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wide(g_cfg.model).c_str(),
-                                          WS_CHILD | WS_VISIBLE, 24, 194, 500, 28, hwnd, nullptr,
-                                          nullptr, nullptr);
-            HWND save = CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                                        24, 286, 100, 32, hwnd, (HMENU)ID_BTN_SETTINGS, nullptr, nullptr);
-            HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                                          136, 286, 100, 32, hwnd, (HMENU)(ID_BTN_SETTINGS + 1),
-                                          nullptr, nullptr);
-            for (HWND h : {g_cfg_key, g_cfg_url, g_cfg_model}) set_font(h, g_ui->f_ui);
-            set_font(save, g_ui->f_ui);
-            set_font(cancel, g_ui->f_ui);
-            SetFocus(g_cfg_key);
+            HWND open_folder = CreateWindowExW(0, L"BUTTON", L"Open config folder", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                               24, 286, 160, 32, hwnd, (HMENU)ID_BTN_SETTINGS, nullptr, nullptr);
+            HWND close = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                         196, 286, 100, 32, hwnd, (HMENU)(ID_BTN_SETTINGS + 1),
+                                         nullptr, nullptr);
+            set_font(open_folder, g_ui->f_ui);
+            set_font(close, g_ui->f_ui);
             return 0;
         }
         case WM_CTLCOLOREDIT:
@@ -633,30 +623,7 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_COMMAND:
             if (LOWORD(wp) == ID_BTN_SETTINGS) {
-                std::string key = box_text(g_cfg_key);
-                std::string url = box_text(g_cfg_url);
-                std::string model = box_text(g_cfg_model);
-                if (!key.empty()) g_cfg.api_key = key;
-                if (!url.empty()) g_cfg.base_url = url;
-                if (!model.empty()) g_cfg.model = model;
-                // Protect credentials with Windows DPAPI before writing settings.
-                std::string protected_key = protect_secret(g_cfg.api_key);
-                if (!g_cfg.api_key.empty() && protected_key.empty()) {
-                    MessageBoxW(hwnd, L"Windows could not protect the API key. Settings were not saved.",
-                                L"Hawk OS security", MB_OK | MB_ICONERROR);
-                    return 0;
-                }
-                FILE* f = fopen((app_dir() + "\\hawk.ini").c_str(), "w");
-                if (f) {
-                    fprintf(f, "# Hawk OS settings - API key is DPAPI-protected for this Windows user\n");
-                    if (!protected_key.empty()) fprintf(f, "api_key_dpapi=%s\n", protected_key.c_str());
-                    fprintf(f, "base_url=%s\n", g_cfg.base_url.c_str());
-                    fprintf(f, "model=%s\n", g_cfg.model.c_str());
-                    fprintf(f, "vision=%d\n", g_cfg.vision ? 1 : 0);
-                    fclose(f);
-                }
-                g_cfg_saved = true;
-                DestroyWindow(hwnd);
+                ShellExecuteW(hwnd, L"open", wide(app_dir()).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 return 0;
             }
             if (LOWORD(wp) == ID_BTN_SETTINGS + 1) {
@@ -677,18 +644,23 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, C_TEXT);
             HGDIOBJ old = SelectObject(dc, g_ui->f_bold);
-            TextOutW(dc, 24, 18, L"MODEL CONNECTION", 16);
+            TextOutW(dc, 24, 18, L"NVIDIA MODEL CONNECTION", 22);
             SelectObject(dc, g_ui->f_ui);
             SetTextColor(dc, C_MUTED);
-            const wchar_t* l1 = L"NVIDIA API key (masked here; saved encrypted with Windows DPAPI)";
-            const wchar_t* l2 = L"OpenAI-compatible API base URL";
-            const wchar_t* l3 = L"Vision-capable model ID (default uses NVIDIA Nemotron vision)";
+            const wchar_t* l1 = L"Hawk uses NVIDIA NIM only. The API key is never entered in this window.";
+            const wchar_t* l2 = L"Create a file named .env beside hawk.exe with these settings:";
+            const wchar_t* l3 = L"NVIDIA_API_KEY=nvapi-your-key-here";
+            const wchar_t* l4 = L"NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1";
+            const wchar_t* l5 = L"NVIDIA_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b";
             TextOutW(dc, 24, 40, l1, (int)wcslen(l1));
-            TextOutW(dc, 24, 106, l2, (int)wcslen(l2));
-            TextOutW(dc, 24, 172, l3, (int)wcslen(l3));
+            TextOutW(dc, 24, 100, l2, (int)wcslen(l2));
             SetTextColor(dc, C_ACCENT);
-            const wchar_t* l4 = L"Tip: .env beside hawk.exe: NVIDIA_API_KEY / NVIDIA_MODEL / NVIDIA_BASE_URL.";
-            TextOutW(dc, 24, 238, l4, (int)wcslen(l4));
+            TextOutW(dc, 24, 132, l3, (int)wcslen(l3));
+            TextOutW(dc, 24, 162, l4, (int)wcslen(l4));
+            TextOutW(dc, 24, 192, l5, (int)wcslen(l5));
+            SetTextColor(dc, C_MUTED);
+            const wchar_t* l6 = L"Restart Hawk after editing .env. The key is read only from this file.";
+            TextOutW(dc, 24, 238, l6, (int)wcslen(l6));
             SelectObject(dc, old);
             EndPaint(hwnd, &ps);
             return 0;
@@ -719,7 +691,7 @@ static void open_settings(HWND owner) {
     RECT orc{};
     GetWindowRect(owner, &orc);
     g_cfg_wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"HawkSettings",
-                                L"HAWK OS - model connection",
+                                L"HAWK OS - NVIDIA setup",
                                 WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
                                 orc.left + 160, orc.top + 120, 570, 370, owner, nullptr,
                                 wc.hInstance, nullptr);
