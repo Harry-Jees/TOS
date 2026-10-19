@@ -57,6 +57,11 @@ Agent::Agent(Config cfg) : config(cfg) {
                     std::to_string(monitor_rects().size()) + " monitor(s), virtual desktop " +
                     std::to_string(virtual_desktop().w) + "x" + std::to_string(virtual_desktop().h) +
                     ")");
+    if (config.api_key.empty()) {
+        log("warn", "NVIDIA API key not loaded. Add NVIDIA_API_KEY to .env beside hawk.exe and restart Hawk.");
+    } else {
+        log("info", "NVIDIA NIM configured: " + config.model + " (API key loaded from .env)");
+    }
     if (config.dry_run) log("warn", "dry-run mode: actions are logged, not performed");
 }
 
