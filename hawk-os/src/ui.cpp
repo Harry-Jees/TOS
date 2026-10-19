@@ -54,19 +54,19 @@ enum {
 static const int HEADER_H = 62;
 #define HEADER_TOP() (HEADER_H + 10)
 
-static const COLORREF C_BG = RGB(10, 14, 20);
-static const COLORREF C_PANEL = RGB(17, 24, 34);
-static const COLORREF C_HEADER1 = RGB(25, 43, 61);
-static const COLORREF C_HEADER2 = RGB(10, 15, 23);
+static const COLORREF C_BG = RGB(8, 11, 15);
+static const COLORREF C_PANEL = RGB(16, 20, 25);
+static const COLORREF C_HEADER1 = RGB(25, 43, 28);
+static const COLORREF C_HEADER2 = RGB(8, 12, 10);
 static const COLORREF C_TEXT = RGB(240, 247, 255);
 static const COLORREF C_MUTED = RGB(143, 164, 184);
-static const COLORREF C_ACCENT = RGB(0, 190, 255);
+static const COLORREF C_ACCENT = RGB(118, 185, 0);
 static const COLORREF C_DANGER = RGB(214, 62, 54);
-static const COLORREF C_BTN = RGB(29, 42, 57);
-static const COLORREF C_BTN_HI = RGB(40, 59, 78);
-static const COLORREF C_LINE = RGB(39, 58, 76);
-static const COLORREF C_FIELD = RGB(9, 15, 23);
-static const COLORREF C_OK = RGB(70, 230, 170);
+static const COLORREF C_BTN = RGB(29, 37, 30);
+static const COLORREF C_BTN_HI = RGB(40, 53, 35);
+static const COLORREF C_LINE = RGB(48, 66, 40);
+static const COLORREF C_FIELD = RGB(10, 14, 11);
+static const COLORREF C_OK = RGB(118, 230, 100);
 static const COLORREF C_WARN = RGB(255, 190, 70);
 static const COLORREF C_OFF = RGB(120, 120, 132);
 
