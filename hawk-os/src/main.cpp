@@ -18,29 +18,36 @@ static void read_dotenv(Config* cfg) {
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
     char line[4096];
+    bool first_line = true;
     while (fgets(line, sizeof(line), f)) {
-        std::string s = trim(line);
-        if (s.empty() || s[0] == '#' ) continue;
+        std::string s(line);
+        // Notepad and some editors save UTF-8 with a BOM; strip it so the first
+        // variable name is still recognised.
+        if (first_line && s.size() >= 3 &&
+            (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB &&
+            (unsigned char)s[2] == 0xBF) s.erase(0, 3);
+        first_line = false;
+        s = trim(s);
+        if (s.empty() || s[0] == '#') continue;
         if (s.rfind("export ", 0) == 0) s = trim(s.substr(7));
         size_t eq = s.find('=');
         if (eq == std::string::npos) continue;
         std::string k = trim(s.substr(0, eq));
         std::string v = trim(s.substr(eq + 1));
         if (v.size() >= 2 && ((v.front() == '"' && v.back() == '"') ||
-                              (v.front() == '\'' && v.back() == '\'')))
+                              (v.front() == '\'' && v.back() == '\''))) {
             v = v.substr(1, v.size() - 2);
-        // Only recognised provider settings are read; no shell expansion or
-        // arbitrary code execution is performed.
+        } else {
+            // Support trailing comments on unquoted values.
+            size_t comment = v.find(" #");
+            if (comment != std::string::npos) v = trim(v.substr(0, comment));
+        }
+        // Deliberately whitelist NVIDIA settings; never execute shell syntax.
         if (k == "NVIDIA_API_KEY") cfg->api_key = v;
-        else if (k == "NVIDIA_BASE_URL") cfg->base_url = v;
-        else if (k == "NVIDIA_MODEL") cfg->model = v;
+        else if (k == "NVIDIA_BASE_URL" && !v.empty()) cfg->base_url = v;
+        else if (k == "NVIDIA_MODEL" && !v.empty()) cfg->model = v;
     }
     fclose(f);
-}
-
-static const char* env_or_null(const char* name) {
-    const char* v = getenv(name);
-    return (v && *v) ? v : nullptr;
 }
 
 // NVIDIA is the only provider. The API key is loaded exclusively from .env
