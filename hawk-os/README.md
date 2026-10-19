@@ -65,18 +65,23 @@ findarea FF840A 60 click   # or: click the biggest blue region on screen
 
 ## NVIDIA model configuration
 
-Hawk reads an optional `.env` file from the same folder as `hawk.exe` at startup. Copy `.env.example` to `.env`, add your own NVIDIA API key, and set the model ID you want to use:
+Hawk uses NVIDIA NIM. It reads the API key **only** from a `.env` file beside `hawk.exe`; it does not read keys from `hawk.ini`, Windows environment variables, the settings window, or CLI arguments.
+
+1. Copy `.env.example` to `.env` in the same folder as `hawk.exe`.
+2. Replace the placeholder with your NVIDIA API key from the NVIDIA API catalog.
+3. Restart Hawk.
 
 ```dotenv
-NVIDIA_API_KEY=nvapi-your-key-here
+NVIDIA_API_KEY=nvapi-your-real-key-here
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b
 ```
 
-Get a key from NVIDIA's API catalog. Use a vision-capable model if you want screenshot-based planning. The model ID is sent with the OpenAI-compatible chat-completions request; Hawk does not download model weights to your PC. The API runs remotely through NVIDIA NIM.
+The default model is a vision-language model for screenshot-based planning. NVIDIA serves it remotely; Hawk does not download model weights. Requests use NVIDIA's OpenAI-compatible NIM chat-completions endpoint, with the model ID from `.env`. Keep `.env` private: it is ignored by Git. Never commit or share your real key. The Model button opens the config folder and shows setup instructions; it does not accept or store secrets.
 
-**Keep `.env` private.** It is ignored by Git. Never paste a real key into source code, screenshots, issues, or commits. The app also supports encrypted `hawk.ini` settings and process variables (`NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL` or the `HAWK_*` equivalents). Process variables override files; CLI flags override settings. The Model Connection dialog saves keys in Windows DPAPI-protected form.
+`hawk.ini`, process environment variables, and CLI key flags cannot supply or override the API key. Model/base URL defaults are NVIDIA-specific; optional `NVIDIA_MODEL` and `NVIDIA_BASE_URL` entries in `.env` can select another compatible NVIDIA NIM model or endpoint.
 
+---
 ## 2. The app window
 
 One dark window, no menus to hunt through:
