@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: hawk-windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-goal-loop:
     runs-on: windows-latest
