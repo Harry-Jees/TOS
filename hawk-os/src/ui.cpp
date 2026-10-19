@@ -505,6 +505,7 @@ static void draw_button(LPDRAWITEMSTRUCT di) {
         case ID_BTN_CAPTURE: glyph = 0xE722; break;
         case ID_BTN_FOLDER: glyph = 0xE8B7; break;
         case ID_BTN_SETTINGS: glyph = 0xE713; break;
+        case ID_BTN_SETTINGS + 2: glyph = 0xE8B7; break;
         case ID_BTN_CLEAR: glyph = 0xE74D; break;
         case ID_QUICK1: glyph = 0xE8A7; break;
         case ID_QUICK2: glyph = 0xE8A5; break;
@@ -545,9 +546,13 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                           136, 286, 100, 32, hwnd, (HMENU)(ID_BTN_SETTINGS + 1),
                                           nullptr, nullptr);
+            HWND open_env = CreateWindowExW(0, L"BUTTON", L"Open .env folder", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                            248, 286, 150, 32, hwnd, (HMENU)(ID_BTN_SETTINGS + 2),
+                                            nullptr, nullptr);
             for (HWND h : {g_cfg_key, g_cfg_url, g_cfg_model}) set_font(h, g_ui->f_ui);
             set_font(save, g_ui->f_ui);
             set_font(cancel, g_ui->f_ui);
+            set_font(open_env, g_ui->f_ui);
             SetFocus(g_cfg_key);
             return 0;
         }
@@ -585,6 +590,10 @@ static LRESULT CALLBACK cfg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (LOWORD(wp) == ID_BTN_SETTINGS + 1) {
                 DestroyWindow(hwnd);
+                return 0;
+            }
+            if (LOWORD(wp) == ID_BTN_SETTINGS + 2) {
+                ShellExecuteW(hwnd, L"open", wide(app_dir()).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 return 0;
             }
             break;
