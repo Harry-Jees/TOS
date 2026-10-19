@@ -83,7 +83,7 @@ static void usage() {
     printf("                 scroll smove sclick sdrag type key focus waitfocus open close\n");
     printf("                 wait waitclose pixel find findarea verifypixel windows monitors\n");
     printf("                 cursor write mkdir workflow log try done\n");
-    printf("Workflow commands: workflow save <name> | workflow list | workflow run <name>\n");
+    printf("Workflow commands: workflow save <name> | workflow list | workflow inspect <name> | workflow run <name>\n");
 }
 
 // --------------------------------------------------------------- self-test --

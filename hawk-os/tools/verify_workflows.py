@@ -27,6 +27,7 @@ def main():
         f"phase-b-cycle-a-{suffix}",
         f"phase-b-cycle-b-{suffix}",
         f"phase-b-large-{suffix}",
+        f"phase-b-inspect-{suffix}",
     ]
     paths = [os.path.join(WORKFLOWS, name + ".hawk") for name in names]
     previous = {}
@@ -114,6 +115,16 @@ def main():
         print(f"workflow outcome memory is queryable: {'PASS' if ok else 'FAIL'}")
         failures += not ok
 
+        with open(paths[4], "w", encoding="utf-8", newline="") as f:
+            f.write("log PHASE_B_INSPECT_MUST_NOT_RUN\nbrowser navigate https://example.com\n")
+        r = run("--dry-run", "--run", f"workflow inspect {names[4]}")
+        output = r.stdout + r.stderr
+        ok = (r.returncode == 0 and "workflow preflight:" in output
+              and "review item(s)" in output and "browser" in output
+              and "PHASE_B_INSPECT_MUST_NOT_RUN" not in output)
+        print(f"workflow preflight reports risks without executing actions: {'PASS' if ok else 'FAIL'}")
+        failures += not ok
+
     finally:
         for path in paths:
             try:
@@ -125,7 +136,7 @@ def main():
             except OSError:
                 pass
 
-    print(f"\n{10 - failures}/10 workflow checks passed")
+    print(f"\n{11 - failures}/11 workflow checks passed")
     return 1 if failures else 0
 
 
