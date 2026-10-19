@@ -94,7 +94,7 @@ static void usage() {
     printf("  --desktop              print the virtual desktop and monitor geometry\n");
     printf("  --focus <title part>   raise a window\n");
     printf("  --selftest             prove capture + physical input work\n\n");
-    printf("Options: --dry-run --delay <ms> --no-restore --key-file <path> --key <key>\n");
+    printf("Options: --dry-run --delay <ms> --no-restore\n");
     printf("         --auto-run   explicitly allow model-generated scripts to execute\n");
     printf("         --allow-sensitive   bypass per-action prompts (trusted CLI use only)\n");
     printf("         --allow-screen-upload   consent to sending screenshots to the model provider\n");
@@ -489,18 +489,10 @@ int run_cli(int argc, char** argv) {
         else if (a == "--steps") { std::string v = next("--steps"); if (!v.empty()) cfg.max_steps = atoi(v.c_str()); }
         else if (a == "--model") cfg.model = next("--model");
         else if (a == "--base-url") cfg.base_url = next("--base-url");
-        else if (a == "--key") cfg.api_key = next("--key");
-        else if (a == "--key-file") {
-            std::string p = next("--key-file");
-            FILE* f = p.empty() ? nullptr : fopen(p.c_str(), "rb");
-            if (!f) {
-                printf("cannot read key file %s\n", p.c_str());
-                return 2;
-            }
-            char line[512] = {0};
-            if (!fgets(line, sizeof(line), f)) line[0] = '\0';
-            fclose(f);
-            cfg.api_key = trim(line);
+        // API credentials cannot be supplied via CLI; load_settings reads .env.
+        else if (a == "--key" || a == "--key-file") {
+            printf("API keys must be stored in .env as NVIDIA_API_KEY; CLI key options are disabled.\\n");
+            return 2;
         } else if (!command.empty()) {
             if (positional == 0) arg1 = a;
             else if (positional == 1) arg2 = a;
