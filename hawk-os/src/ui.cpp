@@ -502,10 +502,6 @@ static void dump_layout(HWND hwnd) {
         fprintf(f, "%s %ld %ld %ld %ld\n", it.name, r.left, r.top, r.right - r.left,
                 r.bottom - r.top);
     }
-    POINT p{g_ui->preview_rect.x, g_ui->preview_rect.y};
-    ClientToScreen(hwnd, &p);
-    fprintf(f, "preview %ld %ld %d %d\n", (long)p.x, (long)p.y, g_ui->preview_rect.w,
-            g_ui->preview_rect.h);
     fclose(f);
 }
 
@@ -767,7 +763,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_ui->btn_stop = make_button(hwnd, ID_BTN_STOP, L"STOP", g_ui->f_bold,
                                          L"Abort the run (or hold ESC, or press Ctrl+Alt+H)");
             g_ui->btn_capture = make_button(hwnd, ID_BTN_CAPTURE, L"Capture", g_ui->f_ui,
-                                            L"Save a screenshot to shots/ and refresh the view");
+                                            L"Capture the desktop to a file; the image is not displayed in Hawk");
             g_ui->btn_folder = make_button(hwnd, ID_BTN_FOLDER, L"Shots folder", g_ui->f_ui, L"Open shots/");
             g_ui->btn_settings = make_button(hwnd, ID_BTN_SETTINGS, L"Model", g_ui->f_ui,
                                              L"API key, base URL and model id");
@@ -810,10 +806,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             dump_layout(hwnd);
             set_running(false);  // STOP is grey until there is something to stop
             log_append(LogLine{"info", std::string(HAWK_NAME) + " " + HAWK_VERSION + " ready"});
-            log_append(LogLine{"info", "Left: live screen. Right: the Agent. Try a quick action, or "
-                                       "type a goal and press Run goal."});
-            log_append(LogLine{"info", "Scripts can see too: `look` reads the screen and lists the "
-                                       "controls it detects; `clickel 1` clicks the top one."});
+            log_append(LogLine{"info", "Control center ready. Enter a goal, review scripts, or choose a quick action."});
+            log_append(LogLine{"info", "Screenshots are captured only when a task needs vision or you press Capture; they are never displayed in this window."});
             log_append(LogLine{"info", "Safety: hold ESC or press Ctrl+Alt+H to abort a run."});
             return 0;
         }
@@ -827,9 +821,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             dump_layout(hwnd);
             return 0;
         case WM_TIMER:
-            compute_preview_rect(hwnd);
-            g_ui->preview = capture_screen();
-            InvalidateRect(hwnd, nullptr, FALSE);
+            if (g_ui->run_state == "running" || g_ui->run_state == "stopping")
+                InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_APP_LOG: {
             auto* line = (LogLine*)lp;
@@ -907,27 +900,6 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SETCURSOR:
             return DefWindowProcW(hwnd, msg, wp, lp);
-        case WM_LBUTTONDOWN: {
-            // clicking the preview can drive the real screen (opt in)
-            if (!g_ui->click_through) break;
-            if (GetTickCount() < g_ui->suppress_click_until) break;  // our own injected click
-            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
-            if (g_ui->preview_rect.contains(mx, my)) {
-                Rect v = virtual_desktop();
-                int sx = v.x + (int)((mx - g_ui->preview_rect.x) / g_ui->preview_scale);
-                int sy = v.y + (int)((my - g_ui->preview_rect.y) / g_ui->preview_scale);
-                std::string err;
-                g_ui->suppress_click_until = GetTickCount() + 500;
-                if (move_cursor(sx, sy, &err) && click_mouse("left", 1, &err)) {
-                    g_ui->last_click = Point{sx, sy};
-                    log_append(LogLine{"action", "click-through click at " + std::to_string(sx) + "," +
-                                                      std::to_string(sy)});
-                } else {
-                    log_append(LogLine{"fail", "click-through: " + err});
-                }
-            }
-            return 0;
-        }
         case WM_COMMAND: {
             int id = LOWORD(wp);
             switch (id) {
@@ -946,7 +918,6 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         g_ui->last_shot = path;
                         log_append(LogLine{"ok", "saved " + path});
                     }
-                    g_ui->preview = capture_screen();
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 }
