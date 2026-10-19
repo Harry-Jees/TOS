@@ -2691,8 +2691,7 @@ bool Agent::run_goal(const std::string& goal) {
             log("info", "no model key: running the goal as a command script");
             return run_script(goal);
         }
-        log("warn", "no model key set, so Hawk OS cannot plan from a screenshot. Press Model to add "
-                    "one, or try a plain instruction like \"open notepad and type hello\".");
+        log("warn", "NVIDIA API key not found. Add NVIDIA_API_KEY=nvapi-... to .env beside hawk.exe, then restart Hawk.");
         return false;
     }
     if (!config.vision) {
