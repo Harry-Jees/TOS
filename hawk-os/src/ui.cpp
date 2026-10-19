@@ -351,8 +351,8 @@ static void paint(HWND hwnd) {
     int margin = 24;
     int card_w = (rc.right - margin * 2 - 14) / 2;
     int top_y = 112;
-    RECT goal_card{margin, top_y, margin + card_w, top_y + 124};
-    RECT quick_card{margin + card_w + 14, top_y, rc.right - margin, top_y + 124};
+    RECT goal_card{margin, top_y, margin + card_w, top_y + 154};
+    RECT quick_card{margin + card_w + 14, top_y, rc.right - margin, top_y + 154};
     draw_round(mem, goal_card, 16, C_PANEL, C_LINE, true);
     draw_round(mem, quick_card, 16, C_PANEL, C_LINE, true);
 
@@ -691,7 +691,15 @@ static void open_settings(HWND owner) {
 static void run_goal_now() {
     std::string goal = trim(box_text(g_ui->goal));
     if (goal.empty()) {
-        log_append(LogLine{"warn", "type a goal first, e.g. \"open notepad and write hello\""});
+        log_append(LogLine{"warn", "Enter a goal first, for example: open Notepad and type hello."});
+        return;
+    }
+    if (g_cfg.api_key.empty()) {
+        log_append(LogLine{"fail", "NVIDIA_API_KEY is missing. Add it to .env beside hawk.exe, then restart Hawk."});
+        MessageBoxW(g_ui->hwnd,
+                    L"Hawk cannot call NVIDIA NIM because NVIDIA_API_KEY is missing.\n\nCreate .env beside hawk.exe and add NVIDIA_API_KEY=your_key, then restart Hawk.",
+                    L"Hawk OS - NVIDIA setup required", MB_OK | MB_ICONWARNING);
+        open_settings(g_ui->hwnd);
         return;
     }
     log_append(LogLine{"info", "goal: " + goal});
